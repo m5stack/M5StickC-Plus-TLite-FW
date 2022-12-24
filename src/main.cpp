@@ -14,8 +14,8 @@
 #include <WiFiServer.h>
 #include <DNSServer.h>
 
-#include <ArduinoJSON.h>  // https://github.com/bblanchon/ArduinoJson/
-#include <M5Unified.h>    // https://github.com/m5stack/M5Unified/
+#include <ArduinoJson.hpp>  // https://github.com/bblanchon/ArduinoJson/
+#include <M5Unified.hpp>    // https://github.com/m5stack/M5Unified/
 #include <lgfx/utility/lgfx_qrcode.h>
 
 #include "common_header.h"
