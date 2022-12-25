@@ -68,7 +68,7 @@ static inline void gpio_lo(int_fast8_t pin) { *get_gpio_lo_reg(pin) = 1 << (pin 
 static void IRAM_ATTR mlxTask(void* main_handle) {
     gpio_num_t PIN_IN_SDA = GPIO_NUM_0;
     gpio_num_t PIN_IN_SCL = GPIO_NUM_26;
-    i2c_port_t PORT_I2C = I2C_NUM_0;
+    i2c_port_t PORT_I2C   = I2C_NUM_0;
     switch (M5.getBoard()) {
         case m5::board_t::board_M5StackCore2:
             PIN_IN_SDA = (gpio_num_t)M5.Ex_I2C.getSDA();
@@ -77,7 +77,7 @@ static void IRAM_ATTR mlxTask(void* main_handle) {
         case m5::board_t::board_M5Stack:
             PIN_IN_SDA = (gpio_num_t)M5.In_I2C.getSDA();
             PIN_IN_SCL = (gpio_num_t)M5.In_I2C.getSCL();
-            PORT_I2C = I2C_NUM_1;
+            PORT_I2C   = I2C_NUM_1;
             break;
         default:
             break;
