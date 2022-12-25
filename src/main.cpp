@@ -3490,7 +3490,7 @@ void setup(void) {
     auto dummy_alloc = heap_caps_malloc(
         heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), MALLOC_CAP_8BIT);
 
-    display.setBrightness(0);
+    display.setBrightness(32);
     M5.begin();
     display.setRotation(1);
     display.drawBmp(bmp_logo, sizeof(bmp_logo), 0, 0, display.width(),
@@ -3692,9 +3692,9 @@ void loop(void) {
             }
 
             delay(1);
-            draw_param.battery_state = M5.Power.isCharging();
-            draw_param.battery_level = M5.Power.getBatteryLevel();
             if (M5.Power.getType() == m5::Power_Class::pmic_axp192) {
+                draw_param.battery_state = M5.Power.isCharging();
+                draw_param.battery_level = M5.Power.getBatteryLevel();
                 static bool prev_acin;
                 if (prev_acin != M5.Power.Axp192.isVBUS()) {
                     prev_acin = !prev_acin;
