@@ -100,6 +100,9 @@ static size_t decode_uri(char* dest, const char* src, size_t bufsiz) {
         if (p[0] == '%' && p[1] != 0 && p[2] != 0) {
             sscanf(&p[1], "%2X", &dest[current]);
             p += 3;
+        } else if (p[0] == '+') {
+            dest[current] = ' ';
+            p += 1;
         } else {
             dest[current] = *p++;
         }
