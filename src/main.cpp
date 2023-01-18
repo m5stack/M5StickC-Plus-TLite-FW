@@ -212,6 +212,9 @@ static constexpr const char KEY_SENS_REFRESHRATE[] = "refreshrate";
 static constexpr const char KEY_SENS_NOISEFILTER[] = "noisefilter";
 static constexpr const char KEY_SENS_MONITORAREA[] = "monitorarea";
 static constexpr const char KEY_SENS_EMISSIVITY[]  = "emissivity";
+static constexpr const char KEY_RANGE_AUTOSWITCH[] = "range_auto";
+static constexpr const char KEY_RANGE_UPPER[]      = "range_upper";
+static constexpr const char KEY_RANGE_LOWER[]      = "range_lower";
 static constexpr const char KEY_NET_RUNNING_MODE[] = "net_running";
 static constexpr const char KEY_NET_JPGQUALITY[]   = "jpg_quality";
 static constexpr const char KEY_CLOUD_UPLOAD[]     = "upload_ena";
@@ -252,6 +255,9 @@ void config_param_t::saveNvs(void) {
     pref.putUChar(KEY_SENS_NOISEFILTER, sens_noisefilter);
     pref.putUChar(KEY_SENS_MONITORAREA, sens_monitorarea);
     pref.putUChar(KEY_SENS_EMISSIVITY, sens_emissivity);
+    pref.putUChar(KEY_RANGE_AUTOSWITCH, range_autoswitch);
+    pref.putUShort(KEY_RANGE_UPPER, range_temp_upper);
+    pref.putUShort(KEY_RANGE_LOWER, range_temp_lower);
     pref.putUChar(KEY_NET_RUNNING_MODE, net_running_mode);
     // pref.putUChar( KEY_NET_SETUP_MODE   , net_setup_mode       );
     // pref.putBool(  KEY_NET_WEBSERVER    , net_webserver        );
@@ -292,6 +298,10 @@ void config_param_t::loadNvs(void) {
         sens_monitorarea = (sens_monitorarea_t)pref.getUChar(
             KEY_SENS_MONITORAREA, sens_monitorarea);
         sens_emissivity  = pref.getUChar(KEY_SENS_EMISSIVITY, sens_emissivity);
+        range_autoswitch = (range_autoswitch_t)pref.getUChar(
+            KEY_RANGE_AUTOSWITCH, range_autoswitch);
+        range_temp_upper = pref.getUShort(KEY_RANGE_UPPER, range_temp_upper);
+        range_temp_lower = pref.getUShort(KEY_RANGE_LOWER, range_temp_lower);
         net_running_mode = (net_running_mode_t)pref.getUChar(
             KEY_NET_RUNNING_MODE, net_running_mode);
         // net_setup_mode       = (net_setup_mode_t)  pref.getUChar(
@@ -342,6 +352,9 @@ void config_param_t::loadDefault(void) {
     sens_noisefilter = sens_noisefilter_t::sens_noisefilter_medium;
     sens_monitorarea = sens_monitorarea_t::sens_monitorarea_30x24;
     sens_emissivity  = 98;
+    range_autoswitch = range_autoswitch_t::range_autoswitch_on;
+    range_temp_upper = (40 + 64) * 128;
+    range_temp_lower = (20 + 64) * 128;
     misc_brightness  = misc_brightness_t ::misc_brightness_middle;
     misc_cpuspeed    = misc_cpuspeed_t ::misc_cpuspeed_160;
     misc_language    = misc_language_t ::misc_language_en;
@@ -450,15 +463,17 @@ bool draw_param_t::update(int frameindex) {
 
 bool draw_param_t::range_update(void) {
     if (!frame) return false;
+    if (range_autoswitch.get() == range_autoswitch_off) return true;
+
     int32_t lowest  = frame->temp[frame->lowest];
     int32_t highest = frame->temp[frame->highest];
     int32_t margin  = ((highest - lowest) >> 4) + 1;
     lowest          = _lowest_value.exec(lowest - margin, margin);
     highest         = _highest_value.exec(highest + margin, margin);
-    if (temp_lowest != lowest || temp_highest != highest) {
-        temp_lowest  = lowest;
-        temp_highest = highest;
-        temp_diff    = (highest - lowest) + 1;
+    if (range_temp_lower != lowest || range_temp_upper != highest) {
+        range_temp_lower = lowest;
+        range_temp_upper = highest;
+        temp_diff        = (highest - lowest) + 1;
         ++modify_count;
         return true;
     }
@@ -1546,6 +1561,7 @@ class config_ui_t : public container_ui_t {
     container_ui_t alarm_config_ui;
     container_ui_t cloud_config_ui;
     container_ui_t sens_config_ui;
+    container_ui_t range_config_ui;
     container_ui_t misc_config_ui;
 
     static void cloud_timezone_func(int32_t v) {
@@ -1578,6 +1594,8 @@ class config_ui_t : public container_ui_t {
                                                            "アラーム"};
         static constexpr const localize_text_t lt_Sensor = {
             "Sensor", "传感器设置", "センサー"};
+        static constexpr const localize_text_t lt_Range = {"Range", "温度量程",
+                                                           "温度レンジ"};
         static constexpr const localize_text_t lt_Others = {
             "Others", "其他设置", "その他"};
 
@@ -1602,11 +1620,16 @@ class config_ui_t : public container_ui_t {
                                                            "開発スタッフ"};
         static constexpr const localize_text_t lt_Staff_option = {
             "Display Info", "显示信息", "情報表示"};
+        static constexpr const localize_text_t lt_Sens_TempHighest = {
+            "Upper Temperature", "上限温度", "上限温度"};
+        static constexpr const localize_text_t lt_Sens_TempLowest = {
+            "Lower Temperature", "下限温度", "下限温度"};
 
         top_config_ui.addItem(new switch_ui_t{&lt_Network, &network_config_ui});
         top_config_ui.addItem(new switch_ui_t{&lt_Cloud, &cloud_config_ui});
         top_config_ui.addItem(new switch_ui_t{&lt_Alarm, &alarm_config_ui});
         top_config_ui.addItem(new switch_ui_t{&lt_Sensor, &sens_config_ui});
+        top_config_ui.addItem(new switch_ui_t{&lt_Range, &range_config_ui});
         top_config_ui.addItem(new switch_ui_t{&lt_Others, &misc_config_ui});
 
         addItem(&top_config_ui);
@@ -1638,6 +1661,11 @@ class config_ui_t : public container_ui_t {
             new value_ui_t{&draw_param.sens_monitorarea, true});
         sens_config_ui.addItem(
             new value_ui_t{&lt_Emissivity, &draw_param.sens_emissivity});
+        range_config_ui.addItem(new value_ui_t{&draw_param.range_autoswitch});
+        range_config_ui.addItem(
+            new value_ui_t{&lt_Sens_TempHighest, &draw_param.range_temp_upper});
+        range_config_ui.addItem(
+            new value_ui_t{&lt_Sens_TempLowest, &draw_param.range_temp_lower});
         misc_config_ui.addItem(new value_ui_t{&draw_param.misc_language, true});
         misc_config_ui.addItem(new value_ui_t{&draw_param.misc_cpuspeed, true});
         misc_config_ui.addItem(new value_ui_t{&draw_param.misc_volume, true});
@@ -1796,6 +1824,18 @@ void config_param_t::sens_noisefilter_func(sens_noisefilter_t v) {
 }
 void config_param_t::perf_emissivity_func(uint8_t v) {
     command_processor::setEmissivity(v);
+}
+void config_param_t::range_temperature_func(int32_t) {
+    if (draw_param.range_temp_upper.get() <=
+        draw_param.range_temp_lower.get()) {
+        auto tmp = (draw_param.range_temp_upper.get() +
+                    draw_param.range_temp_lower.get()) /
+                   2;
+        draw_param.range_temp_upper.set(tmp + 16);
+        draw_param.range_temp_lower.set(tmp - 16);
+    }
+    draw_param.temp_diff = abs(draw_param.range_temp_upper.get() -
+                               draw_param.range_temp_lower.get());
 }
 
 void config_param_t::misc_color_func(misc_color_t v) {
@@ -2193,12 +2233,12 @@ class image_ui_t : public ui_base_t {
 
             int32_t v0;
             int32_t v1 = ((param->frame->pixel_raw[(fy - 1) * frame_width] -
-                           param->temp_lowest)
+                           param->range_temp_lower)
                           << 16) /
                          boxHeight;
             int32_t v2;
             int32_t v3 = ((param->frame->pixel_raw[(fy)*frame_width] -
-                           param->temp_lowest)
+                           param->range_temp_lower)
                           << 16) /
                          boxHeight;
 
@@ -2209,12 +2249,12 @@ class image_ui_t : public ui_base_t {
                 int32_t boxWidth = x1 - x0;
                 v0               = v1;
                 v1 = ((param->frame->pixel_raw[fx + (fy - 1) * frame_width] -
-                       param->temp_lowest)
+                       param->range_temp_lower)
                       << 16) /
                      boxHeight;
                 v2 = v3;
                 v3 = ((param->frame->pixel_raw[fx + (fy)*frame_width] -
-                       param->temp_lowest)
+                       param->range_temp_lower)
                       << 16) /
                      boxHeight;
                 if (boxWidth == 0) continue;
@@ -2348,8 +2388,9 @@ class graph_ui_t : public ui_base_t {
             for (int y = ystart; y < yend + fontHeight; ++y) {
                 int32_t prev_raw = line_idx;
                 int32_t i        = _client_rect.h - (y + 1);
-                raw   = (i * graph_temp_diff / _client_rect.h) + _range_lowest;
-                int v = ((raw - param->temp_lowest) << 8) / param->temp_diff;
+                raw = (i * graph_temp_diff / _client_rect.h) + _range_lowest;
+                int v =
+                    ((raw - param->range_temp_lower) << 8) / param->temp_diff;
                 line_idx         = (raw - raw_step_offset) / _step_raw;
                 v                = (v < 0) ? 0 : (v > 255) ? 255 : v;
                 uint16_t color   = param->color_map[v];
@@ -2512,24 +2553,12 @@ class hist_ui_t : public ui_base_t {
             ++step_index;
         }
         _step_raw = step_table[step_index] * 128;
-    }
-    int32_t _step_raw;
-
-    void draw(draw_param_t* param, M5Canvas* canvas, int32_t canvas_y,
-              int32_t h) override {
-        // if (_client_rect.empty()) { return; }
-        // {
-        //     int32_t x, y, w, h;
-        //     canvas->setClipRect(_client_rect.x, _client_rect.y - canvas_y,
-        //     _client_rect.w, _client_rect.h); canvas->getClipRect(&x, &y, &w,
-        //     &h); if (0 == (w + h)) { return; }
-        // }
 
         memset(_histgram, 0, _hist_len * sizeof(_histgram[0]));
 
         {  // Histogram Aggregation.
             int hist_max  = _hist_len - 1;
-            int temp_low  = param->temp_lowest;
+            int temp_low  = param->range_temp_lower;
             int temp_diff = param->temp_diff;
             for (int idx = 0; idx < frame_width * frame_height; ++idx) {
                 int hist_idx =
@@ -2544,7 +2573,11 @@ class hist_ui_t : public ui_base_t {
                 _histgram[++hist_idx > hist_max ? hist_max : hist_idx] += rate;
             }
         }
+    }
+    int32_t _step_raw;
 
+    void draw(draw_param_t* param, M5Canvas* canvas, int32_t canvas_y,
+              int32_t h) override {
         int32_t drawX      = _client_rect.x;
         int32_t drawY      = _client_rect.y - canvas_y;
         int32_t drawWidth  = _client_rect.w;
@@ -2568,13 +2601,13 @@ class hist_ui_t : public ui_base_t {
         }
         int32_t i   = drawHeight - (y_value);
         int32_t raw = ((i * param->temp_diff / drawHeight) +
-                       param->temp_lowest - raw_step_offset) /
+                       param->range_temp_lower - raw_step_offset) /
                       _step_raw;
         for (; y < h + fontHeight; ++y, ++y_value) {
             i                = drawHeight - (y_value + 1);
             int32_t prev_raw = raw;
-            raw = ((i * param->temp_diff / drawHeight) + param->temp_lowest -
-                   raw_step_offset) /
+            raw              = ((i * param->temp_diff / drawHeight) +
+                   param->range_temp_lower - raw_step_offset) /
                   _step_raw;
             bool drawline = (prev_raw != raw);
             uint16_t color =

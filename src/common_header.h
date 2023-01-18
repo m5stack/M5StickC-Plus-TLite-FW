@@ -5,7 +5,7 @@
 
 static constexpr const uint8_t firmware_ver_major = 0;
 static constexpr const uint8_t firmware_ver_minor = 0;
-static constexpr const uint8_t firmware_ver_patch = 6;
+static constexpr const uint8_t firmware_ver_patch = 7;
 
 static constexpr uint8_t frame_width  = 32;
 static constexpr uint8_t frame_height = 24;
@@ -919,6 +919,12 @@ struct config_param_t {
     static constexpr const uint8_t sens_monitorarea_value[] = {
         0x88u, 0xAAu, 0xCC, 0xEC, 0xFC};
 
+    enum range_autoswitch_t {
+        range_autoswitch_off,
+        range_autoswitch_on,
+        range_autoswitch_max,
+    };
+
     enum misc_brightness_t {
         misc_brightness_low,
         misc_brightness_middle,
@@ -998,6 +1004,11 @@ struct config_param_t {
         snprintf(text_buf, buf_len, "%3.1fC", (float)v / 128 - 64);
     }
 
+    static void sens_temperature_text_func(char* text_buf, size_t buf_len,
+                                           int32_t v) {
+        snprintf(text_buf, buf_len, "%3.1fC", (float)v / 128 - 64);
+    }
+
     static void perf_emissivity_text_func(char* text_buf, size_t buf_len,
                                           uint8_t v) {
         snprintf(text_buf, buf_len, "%d %%", v);
@@ -1031,6 +1042,7 @@ struct config_param_t {
     static void sens_refreshrate_func(sens_refreshrate_t);
     static void sens_noisefilter_func(sens_noisefilter_t);
     static void perf_emissivity_func(uint8_t);
+    static void range_temperature_func(int32_t);
     // static void net_wifi_mode_func(net_wifi_mode_t);
     static void misc_brightness_func(misc_brightness_t);
     static void misc_language_func(misc_language_t);
@@ -1143,6 +1155,31 @@ struct config_param_t {
     config_property_value_t<uint8_t> sens_emissivity = {
         perf_emissivity_text_func, 98, 20, 100, 1, perf_emissivity_func};
 
+    config_property_localize_enum_t<range_autoswitch_t> range_autoswitch = {
+        {"Auto Range", "自动量程", "自動レンジ"},
+        (const localize_text_t[]){
+            {"Off", "关闭", "無効"},
+            {"On", "打开", "有効"},
+        },
+        range_autoswitch_t::range_autoswitch_on,
+        range_autoswitch_t::range_autoswitch_max};
+
+    config_property_value_t<int32_t> range_temp_upper = {
+        sens_temperature_text_func,
+        (300 + 64) * 128,
+        (-50 + 64) * 128,
+        (350 + 64) * 128,
+        32,
+        range_temperature_func};
+
+    config_property_value_t<int32_t> range_temp_lower = {
+        sens_temperature_text_func,
+        (0 + 64) * 128,
+        (-50 + 64) * 128,
+        (350 + 64) * 128,
+        32,
+        range_temperature_func};
+
     config_property_localize_enum_t<misc_cpuspeed_t> misc_cpuspeed = {
         {"CPU Clock", "CPU 主频", "CPU周波数"},
         (const localize_text_t[]){
@@ -1234,8 +1271,9 @@ struct config_param_t {
     // bool net_webserver = false;
     // uint8_t misc_rotation = 1;
 
-    bool in_config_mode    = false;
-    uint8_t in_pause_state = 0;
+    bool in_config_mode     = false;
+    uint8_t in_pause_state  = 0;
+    bool in_rangehold_state = false;
     // uint8_t show_reference_name = 0;
     uint8_t request_wifi_state = 0;
 };
@@ -1254,8 +1292,6 @@ struct draw_param_t : public config_param_t {
     graph_data_t graph_data;
     // static constexpr const uint16_t graph_temp_len = 240;
     // uint16_t* graph_temp_arrays[4] = { nullptr, };
-    int32_t temp_lowest;
-    int32_t temp_highest;
     int32_t temp_diff;
     uint16_t background_color = 0;
     uint8_t update_count      = 0;
