@@ -274,6 +274,38 @@ static bool response_main(draw_param_t* draw_param, connection_t* conn) {
         "li>\n</ul>\n";
 
     strbuf +=
+        "<label for='tgl_range'>Range</label><input type='checkbox' "
+        "id='tgl_range'>\n<ul>\n"
+        "<li>Auto Range: <select id='range_autoswitch' "
+        "onchange='f(\"range_autoswitch=\" + "
+        "this.options[this.selectedIndex].value)'>";
+    for (int i = 0; i < draw_param->range_autoswitch_max; ++i) {
+        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
+                                     "<option value=\"%d\">%s</option>\n", i,
+                                     draw_param->range_autoswitch.getText(i)));
+    }
+    strbuf += "</select></li>\n";
+    strbuf += " <li> Upper Temperature: <span id='rh'>";
+    strbuf.append(cbuf,
+                  snprintf(cbuf, sizeof(cbuf), "%3.1f",
+                           convertRawToCelsius(draw_param->range_temp_upper)));
+    strbuf +=
+        "</span><br>\n<input width='400em' type='range' min='-50' max='350' "
+        "step='0.5' id='range_temp_upper' onchange='f(\"range_temp_upper=\" "
+        "+ this.value)' "
+        "oninput='document.getElementById(\"rh\").innerText=this.value'></li>";
+    strbuf += " <li> Lower Temperature: <span id='rl'>";
+    strbuf.append(cbuf,
+                  snprintf(cbuf, sizeof(cbuf), "%3.1f",
+                           convertRawToCelsius(draw_param->range_temp_lower)));
+    strbuf +=
+        "</span><br>\n<input width='400em' type='range' min='-50' max='350' "
+        "step='0.5' id='range_temp_lower' onchange='f(\"range_temp_lower=\" "
+        "+ this.value)' "
+        "oninput='document.getElementById(\"rl\").innerText=this.value'></"
+        "li>\n</ul>\n";
+
+    strbuf +=
         "<label for='tgl_misc'>Others</label><input type='checkbox' "
         "id='tgl_misc'>\n<ul>\n"
         "<li>CPU Speed: <select id='misc_cpuspeed' "
@@ -380,6 +412,12 @@ static bool response_param(draw_param_t* draw_param, connection_t* conn) {
         if (key == "alarm_temperature") {
             draw_param->alarm_temperature =
                 convertCelsiusToRaw(atof(val.c_str()));
+        } else if (key == "range_temp_upper") {
+            draw_param->range_temp_upper =
+                convertCelsiusToRaw(atof(val.c_str()));
+        } else if (key == "range_temp_lower") {
+            draw_param->range_temp_lower =
+                convertCelsiusToRaw(atof(val.c_str()));
         } else if (key == "cloud_token") {
             draw_param->cloud_token = val.c_str();
         } else {
@@ -399,6 +437,8 @@ static bool response_param(draw_param_t* draw_param, connection_t* conn) {
                 draw_param->sens_monitorarea.set(v);
             } else if (key == "sens_emissivity") {
                 draw_param->sens_emissivity.set(v);
+            } else if (key == "range_autoswitch") {
+                draw_param->range_autoswitch.set(v);
             } else if (key == "net_jpg_quality") {
                 draw_param->net_jpg_quality.set(v);
             } else if (key == "misc_cpuspeed") {
@@ -450,6 +490,17 @@ static bool response_param(draw_param_t* draw_param, connection_t* conn) {
     strbuf.append(
         cbuf, snprintf(cbuf, sizeof(cbuf), ",\n \"sens_emissivity\": \"%d\"",
                        draw_param->sens_emissivity.get()));
+    strbuf.append(
+        cbuf, snprintf(cbuf, sizeof(cbuf), ",\n \"range_autoswitch\": \"%d\"",
+                       draw_param->range_autoswitch.get()));
+    strbuf.append(
+        cbuf,
+        snprintf(cbuf, sizeof(cbuf), ",\n \"range_temp_upper\": \"%3.1f\"",
+                 convertRawToCelsius(draw_param->range_temp_upper)));
+    strbuf.append(
+        cbuf,
+        snprintf(cbuf, sizeof(cbuf), ",\n \"range_temp_lower\": \"%3.1f\"",
+                 convertRawToCelsius(draw_param->range_temp_lower)));
     strbuf.append(
         cbuf, snprintf(cbuf, sizeof(cbuf), ",\n \"net_jpg_quality\": \"%d\"",
                        draw_param->net_jpg_quality.get()));
