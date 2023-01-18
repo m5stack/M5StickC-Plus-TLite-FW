@@ -1594,7 +1594,7 @@ class config_ui_t : public container_ui_t {
                                                            "アラーム"};
         static constexpr const localize_text_t lt_Sensor = {
             "Sensor", "传感器设置", "センサー"};
-        static constexpr const localize_text_t lt_Range  = {"Range", "温度量程",
+        static constexpr const localize_text_t lt_Range = {"Range", "温度量程",
                                                            "温度レンジ"};
         static constexpr const localize_text_t lt_Others = {
             "Others", "其他设置", "その他"};
