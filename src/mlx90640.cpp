@@ -1038,9 +1038,8 @@ struct MLX90640_params_t {
                 int i            = pixelNumber >> 1;
                 int ilPattern    = (i >> 4) & 1;
                 if (pixelNumber == ((i << 1) + ((ilPattern ^ subPage) & 1))) {
-                    int pn       = pixelNumber - 32;
-                    size_t x     = pn & 31;
-                    size_t y     = pn >> 5;
+                    size_t x     = pixelNumber & 31;
+                    size_t y     = pixelNumber >> 5;
                     uint32_t sum = 0;
                     int count    = 0;
                     if (x > 1) {
