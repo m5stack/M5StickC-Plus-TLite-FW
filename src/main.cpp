@@ -3637,7 +3637,7 @@ void setup(void) {
             }
         }
 //      if (draw_param.sys_ssid.empty()) {
-//          if (WiFi.begin("YOUR_DEFAULT_SSID", "YOUR_DEFAULT_PASSWORD"));
+//          WiFi.begin("YOUR_DEFAULT_SSID", "YOUR_DEFAULT_PASSWORD");
 //      }
     }
 
