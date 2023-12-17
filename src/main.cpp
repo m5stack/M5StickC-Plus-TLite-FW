@@ -3728,9 +3728,9 @@ void loop(void) {
             }
 
             delay(1);
+            draw_param.battery_state = M5.Power.isCharging();
+            draw_param.battery_level = M5.Power.getBatteryLevel();
             if (M5.Power.getType() == m5::Power_Class::pmic_axp192) {
-                draw_param.battery_state = M5.Power.isCharging();
-                draw_param.battery_level = M5.Power.getBatteryLevel();
                 static bool prev_acin;
                 if (prev_acin != M5.Power.Axp192.isVBUS()) {
                     prev_acin = !prev_acin;
