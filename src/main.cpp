@@ -3636,9 +3636,9 @@ void setup(void) {
                 draw_param.sys_ssid = (char*)(current_conf.sta.ssid);
             }
         }
-//      if (draw_param.sys_ssid.empty()) {
-//          WiFi.begin("YOUR_DEFAULT_SSID", "YOUR_DEFAULT_PASSWORD");
-//      }
+        // if (draw_param.sys_ssid.empty()) {
+        //     WiFi.begin("YOUR_DEFAULT_SSID", "YOUR_DEFAULT_PASSWORD");
+        // }
     }
 
     xTaskCreatePinnedToCore(wifiTask, "wifiTask", 4096, nullptr, 3, nullptr,
