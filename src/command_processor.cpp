@@ -65,6 +65,27 @@ static inline void gpio_hi(int_fast8_t pin) { *get_gpio_hi_reg(pin) = 1 << (pin 
 static inline void gpio_lo(int_fast8_t pin) { *get_gpio_lo_reg(pin) = 1 << (pin & 31); }
 /* clang-format on */
 
+static int8_t _battery_state = 0;
+static int8_t _battery_level = 0;
+static bool _battery_request = false;
+
+void updateBattery(void) {
+    if (M5.Power.getType() == m5::Power_Class::pmic_ip5306) {
+        _battery_request = true;
+    } else {
+        _battery_state = M5.Power.isCharging();
+        _battery_level = M5.Power.getBatteryLevel();
+    }
+}
+
+int8_t getBatteryLevel(void) {
+    return _battery_level;
+}
+
+int8_t getBatteryState(void) {
+    return _battery_state;
+}
+
 static void IRAM_ATTR mlxTask(void* main_handle) {
     gpio_num_t PIN_IN_SDA = GPIO_NUM_0;
     gpio_num_t PIN_IN_SCL = GPIO_NUM_26;
@@ -150,8 +171,13 @@ static void IRAM_ATTR mlxTask(void* main_handle) {
             }
         } else {
             static constexpr const uint8_t delay_tbl[] = {32, 16, 8, 4,
-                                                          2,  1,  1, 1};
+                                                            2,  1,  1, 1};
             vTaskDelay(delay_tbl[rate]);
+        }
+        if (_battery_request) {
+            _battery_request = false;
+            _battery_state = M5.Power.isCharging();
+            _battery_level = M5.Power.getBatteryLevel();
         }
     }
     vTaskDelete(nullptr);

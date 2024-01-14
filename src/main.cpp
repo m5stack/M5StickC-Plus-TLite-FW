@@ -3525,6 +3525,7 @@ void setup(void) {
 
     display.setBrightness(32);
     M5.begin();
+    M5.BtnPWR.setHoldThresh(1024);
     display.setRotation(1);
     display.drawBmp(bmp_logo, sizeof(bmp_logo), 0, 0, display.width(),
                     display.height(), 0, 0, 1.0f, 1.0f, datum_t::middle_center);
@@ -3727,9 +3728,10 @@ void loop(void) {
                 prev_dc = dc;
             }
 
+            command_processor::updateBattery();
             delay(1);
-            draw_param.battery_state = M5.Power.isCharging();
-            draw_param.battery_level = M5.Power.getBatteryLevel();
+            draw_param.battery_state = command_processor::getBatteryState();
+            draw_param.battery_level = command_processor::getBatteryLevel();
             if (M5.Power.getType() == m5::Power_Class::pmic_axp192) {
                 static bool prev_acin;
                 if (prev_acin != M5.Power.Axp192.isVBUS()) {

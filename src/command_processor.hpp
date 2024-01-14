@@ -23,6 +23,8 @@ void setRate(uint8_t rate);
 void setFilter(uint8_t level);
 void setEmissivity(uint8_t percent);
 uint32_t getRecvCount(void);
-
+void updateBattery(void);
+int8_t getBatteryLevel(void);
+int8_t getBatteryState(void);
 m5::MLX90640_Class::temp_data_t* getTemperatureData(void);
 }  // namespace command_processor
