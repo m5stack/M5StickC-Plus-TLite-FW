@@ -171,13 +171,13 @@ static void IRAM_ATTR mlxTask(void* main_handle) {
             }
         } else {
             static constexpr const uint8_t delay_tbl[] = {32, 16, 8, 4,
-                                                            2,  1,  1, 1};
+                                                          2,  1,  1, 1};
             vTaskDelay(delay_tbl[rate]);
         }
         if (_battery_request) {
             _battery_request = false;
-            _battery_state = M5.Power.isCharging();
-            _battery_level = M5.Power.getBatteryLevel();
+            _battery_state   = M5.Power.isCharging();
+            _battery_level   = M5.Power.getBatteryLevel();
         }
     }
     vTaskDelete(nullptr);
