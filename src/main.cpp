@@ -2234,14 +2234,15 @@ class image_ui_t : public ui_base_t {
             int32_t v0;
             int32_t v1 = ((param->frame->pixel_raw[(fy - 1) * frame_width] -
                            param->range_temp_lower)
-                          << 16) /
-                         boxHeight;
+                          << 8) /
+                         param->temp_diff;
+            v1 = (v1 < 0) ? 0 : (v1 > 255) ? 255 : v1;
             int32_t v2;
             int32_t v3 = ((param->frame->pixel_raw[(fy)*frame_width] -
                            param->range_temp_lower)
-                          << 16) /
-                         boxHeight;
-
+                          << 8) /
+                         param->temp_diff;
+            v3 = (v3 < 0) ? 0 : (v3 > 255) ? 255 : v3;
             int32_t x1 = 0;
             for (int32_t fx = 1; fx < frame_width; ++fx) {
                 int32_t x0       = x1;
@@ -2250,15 +2251,17 @@ class image_ui_t : public ui_base_t {
                 v0               = v1;
                 v1 = ((param->frame->pixel_raw[fx + (fy - 1) * frame_width] -
                        param->range_temp_lower)
-                      << 16) /
-                     boxHeight;
+                      << 8) /
+                     param->temp_diff;
+                v1 = (v1 < 0) ? 0 : (v1 > 255) ? 255 : v1;
                 v2 = v3;
                 v3 = ((param->frame->pixel_raw[fx + (fy)*frame_width] -
                        param->range_temp_lower)
-                      << 16) /
-                     boxHeight;
+                      << 8) /
+                     param->temp_diff;
+                v3 = (v3 < 0) ? 0 : (v3 > 255) ? 255 : v3;
                 if (boxWidth == 0) continue;
-                int32_t divider = boxWidth * param->temp_diff;
+                uint32_t mul = (1 << 16) / (boxWidth * boxHeight);
 
                 int32_t ypos = y0 - canvas_y;
                 int32_t by   = 0;
@@ -2268,18 +2271,15 @@ class image_ui_t : public ui_base_t {
                 }
                 for (; by < boxHeight && ypos < canvas->height();
                      ++by, ++ypos) {
-                    int32_t v02 = (v0 * (boxHeight - by) + v2 * by) / divider;
-                    int32_t v13 = (v1 * (boxHeight - by) + v3 * by) / divider;
+                    uint32_t v02 = (v0 * (boxHeight - by) + v2 * by) * mul;
+                    uint32_t v13 = (v1 * (boxHeight - by) + v3 * by) * mul;
                     auto img_buf =
                         &((m5gfx::swap565_t*)
                               canvas->getBuffer())[_client_rect.x + x0 +
                                                    ypos * canvas->width()];
                     for (int32_t bx = 0; bx < boxWidth; ++bx) {
-                        int32_t v   = (v02 * (boxWidth - bx) + v13 * bx) >> 8;
-                        img_buf[bx] = m5gfx::getSwap16(
-                            (param->color_map[(v < 0)     ? 0
-                                              : (v > 255) ? 255
-                                                          : v]));
+                        uint32_t v   = (v02 * (boxWidth - bx) + v13 * bx) >> 16;
+                        img_buf[bx] = m5gfx::getSwap16(param->color_map[v]);
                     }
                 }
             }
