@@ -3142,9 +3142,9 @@ void setup(void) {
     auto macaddr = draw_param.macaddr;
     esp_read_mac(macaddr, ESP_MAC_WIFI_SOFTAP);
     snprintf(draw_param.net_apmode_ssid, sizeof(draw_param.net_apmode_ssid),
-             "Thermal Camera");
+             "ThermalCamera");
 
-    draw_param.net_hostname = "Thermal Camera";
+    draw_param.net_hostname = "thermalcamera";
     draw_param.net_hostname += ".local";
 
     char cbuf[32];
