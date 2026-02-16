@@ -126,7 +126,7 @@ void IRAM_ATTR I2C_Master::save_reg(void) {
     fifo_conf        = i2c_dev->fifo_conf.val;
     timeout          = i2c_dev->timeout.val;
 #if defined(I2C_FILTER_CFG_REG)
-    filter_cfg = dev->filter_cfg.val;
+    filter_cfg = i2c_dev->filter_cfg.val;
 #else
     scl_filter                  = i2c_dev->scl_filter_cfg.val;
     sda_filter                  = i2c_dev->sda_filter_cfg.val;

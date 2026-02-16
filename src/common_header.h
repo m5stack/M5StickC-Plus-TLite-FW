@@ -1,7 +1,8 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <M5GFX.h>
-#include <WiFi.h>
+#include <IPAddress.h>
+#include <lwip/ip_addr.h>
 
 static constexpr const uint8_t firmware_ver_major = 0;
 static constexpr const uint8_t firmware_ver_minor = 0;
@@ -26,6 +27,14 @@ static constexpr const char wday_tbl[7][4] = {
 };
 
 #define SIZEOF_ARRAY(a) (sizeof(a) / sizeof(a[0]))
+
+// Sentry Mode Status Data
+struct SentryData {
+    uint32_t last_report_time = 0;
+    float last_avg_temp = 0.0f;
+    float last_min_temp = 0.0f;
+    float last_max_temp = 0.0f;
+};
 
 static constexpr const uint16_t color_map_table[][256] = {
     {
@@ -605,7 +614,6 @@ struct single_text_t : public itext_t {
 };
 
 struct localize_text_t : public itext_t {
-    static uint8_t localize_index;
     const char* text;
     constexpr localize_text_t(const char* t1)
         : text{t1} {
@@ -1008,7 +1016,7 @@ struct config_param_t {
 
     const char net_apmode_pass[12] = "12341234";
     char net_apmode_ssid[16] =
-        "T-Lite_xxxx";  // セットアップ時にMACアドレスを付与するためサイズに余裕を持たせておく
+        "THERMAL_xxxx";  // セットアップ時にMACアドレスを付与するためサイズに余裕を持たせておく
     const ip_addr_t dnsip = IPADDR4_INIT_BYTES(192, 168, 4, 1);
     const IPAddress net_apmode_ipaddr{192, 168, 4, 1};
     const IPAddress net_apmode_subnet{255, 255, 255, 0};
@@ -1286,7 +1294,7 @@ struct draw_param_t : public config_param_t {
     std::string net_ap_url;    // APモードアクセス用URL
     std::string net_url_mdns;  // mDNS名アクセス用URL
     std::string net_url_ip;    // mDNS名アクセス用URL
-    std::string net_hostname;  // T-Lite_xxxx.local
+    std::string net_hostname;  // THERMAL_xxxx.local
 
    protected:
     const framedata_t* _frame_array;

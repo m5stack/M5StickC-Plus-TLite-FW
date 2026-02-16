@@ -2,6 +2,11 @@
 //! Licensed under the MIT license.
 //! See LICENSE file in the project root for full license information.
 
+#if defined(WIFI_DISABLED)
+void webserverTask(void*) {
+}
+#else
+
 #include <WiFi.h>
 #include <WiFiServer.h>
 #include <ESPmDNS.h>
@@ -20,8 +25,8 @@ static constexpr const char HTTP_200_json[] =
     "charset=UTF-8\nX-Content-Type-Options: nosniff\nConnection: "
     "keep-alive\nCache-Control: no-cache\n\n";
 static constexpr const char HTML_footer[] =
-    "<div class='ft'>Copyright &copy;2022 "
-    "M5Stack</div></div>\n</body></html>\n\n";
+    "<div class='ft'>Copyright &copy;2022" 
+    "</div></div>\n</body></html>\n\n";
 
 static constexpr const char HTML_style[] =
     "<style>"
@@ -138,7 +143,7 @@ static bool response_main(draw_param_t* draw_param, connection_t* conn) {
     char cbuf[64];
 
     strbuf = "<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<title>T-Lite Control</title><style>"
+        "<title>Device Control</title><style>"
         "body{font-family:sans-serif;margin:0;padding:10px;background:#1a1a1a;color:#eee}"
         "h1{margin:0 0 20px;text-align:center;font-size:24px;color:#2eb840}"
         ".grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px}"
@@ -152,7 +157,7 @@ static bool response_main(draw_param_t* draw_param, connection_t* conn) {
         "button{width:100%;padding:10px;margin:10px 0 0;background:#2eb840;color:#000;border:none;border-radius:4px;font-weight:bold;cursor:pointer}"
         ".info{font-size:12px;color:#999;margin-top:10px;text-align:center}"
         "</style></head><body>"
-        "<h1>T-Lite Control</h1>";
+        "<h1>DEVICE CONTROL</h1>";
 
     // Sentry Mode - Big prominent control
     strbuf += "<div class='sentry'><b>SENTRY MODE</b><br>";
@@ -519,7 +524,7 @@ static bool response_text(draw_param_t* draw_param, connection_t* conn) {
         "<meta name=\"viewport\" content=\"width=device-width, "
         "initial-scale=1.0\">\n"
         "<meta http-equiv=\"refresh\" content=\"1; URL=\">\n"
-        "<title>T-Lite Text Info</title>\n</head>\n<body><table>\n";
+        "<title>Device Text Info</title>\n</head>\n<body><table>\n";
     char cbuf[128];
 
     std::string strbuf = html_1;
@@ -627,13 +632,13 @@ static bool response_wifi(draw_param_t* draw_param, connection_t* conn) {
                         if (retry) {
                             static constexpr const char html_success_1[] =
                             "<html><head><meta http-equiv=\"Content-Type\"
-            content=\"text/html; charset=UTF-8\"><title>T-Lite</title>\n"
+            content=\"text/html; charset=UTF-8\"><title>Device</title>\n"
                             "<style>\n body,select,button{font-size:12vw
             !important;font-size:24px;}\n"
                             ".ft{flex:0 0 auto;padding:10px
             0;text-align:center}\n" "ul,li{list-style:none;padding-left:0;}\n"
                             "a{font-size:8vw;text-align:center;display:block;background:#abc;padding:8px;margin-bottom:3px;cursor:pointer;}\n"
-                            "</style></head><body><div><h4>T-Lite</h4>\n<ul>"
+                            "</style></head><body><div><h4>DEVICE</h4>\n<ul>"
                             "<li>WiFi connected !</li>\n<li>";
 
                             static constexpr const char html_success_2[] =
@@ -662,7 +667,7 @@ static bool response_wifi(draw_param_t* draw_param, connection_t* conn) {
         "charset=UTF-8\">\n"
         "<meta name=\"viewport\" content=\"width=device-width, "
         "initial-scale=1.0\">\n"
-        "<title>T-Lite WiFi setup</title>\n"
+        "<title>WiFi Setup</title>\n"
         "<script>function s(a){var l=document.querySelectorAll('.list "
         "a');for(let i=0;i<l.length;i++){"
         "if(a===l[i]){a.classList.add('active')}else{l[i].classList.remove('"
@@ -675,7 +680,7 @@ static bool response_wifi(draw_param_t* draw_param, connection_t* conn) {
         "</script>\n";
 
     static constexpr const char html_2[] =
-        "</head><body><div class='ct'><h1>T-Lite WiFi setup</h1>"
+        "</head><body><div class='ct'><h1>WIFI SETUP</h1>"
         "<div class='main'>";
     static constexpr const char html_3[] = "<div class='ls'><h2>SSID List</h2>";
 
@@ -741,10 +746,10 @@ static bool response_top(draw_param_t* draw_param, connection_t* conn) {
         "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">\n"
         "<meta name=\"viewport\" content=\"width=device-width, "
         "initial-scale=1.0\">\n"
-        "<title>T-Lite Top Menu</title>\n";
+        "<title>Device Menu</title>\n";
 
     static constexpr const char html_2[] =
-        "</head><body><div class='ct'><h1>T-Lite Top menu</h1>"
+        "</head><body><div class='ct'><h1>DEVICE MENU</h1>"
         "<div class='main'><div class='ls'><h2>Cloud</h2>";
 
     static constexpr const char html_3[] =
@@ -833,12 +838,7 @@ struct response_table_t {
 };
 
 // Sentry Mode API endpoints
-extern struct SentryData {
-    uint32_t last_report_time;
-    float last_avg_temp;
-    float last_min_temp;
-    float last_max_temp;
-} sentry_data;
+extern SentryData sentry_data;
 
 static bool response_sentry_status(draw_param_t* draw_param, connection_t* conn) {
     auto client = &conn->client;
@@ -915,6 +915,7 @@ void webserverTask(void* arg) {
                 // httpServer.setNoDelay(true);
                 MDNS.begin(draw_param->net_apmode_ssid);
                 MDNS.addService("http", "tcp", 80);
+                MDNS.addServiceTxt("http", "tcp", "api", "sentry");
                 // ESP_EARLY_LOGD("DEBUG","httpServer begin");
             } else {
                 MDNS.end();
@@ -1087,3 +1088,4 @@ void webserverTask(void* arg) {
         }
     }
 }
+#endif

@@ -14,6 +14,7 @@
 #if !defined(WIFI_DISABLED)
 #include <esp_sntp.h>
 #include <esp_wifi.h>
+#include <WiFi.h>
 #include <WiFiServer.h>
 #include <DNSServer.h>
 #endif
@@ -49,7 +50,7 @@ struct wifi_preset_t {
     const char* ssid;
     const char* password;
 } wifi_presets[3] = {
-    {"", ""},
+    {"IoTA", "keyforaccesstothisrestrictedwirelessnnetwork"},
     {"", ""},  // work: empty
     {"", ""}   // custom: empty
 };
@@ -1575,18 +1576,25 @@ class config_ui_t : public container_ui_t {
         static constexpr const localize_text_t lt_Alarm = {"Alarm"};
         static constexpr const localize_text_t lt_Sensor = {"Sensor"};
         static constexpr const localize_text_t lt_Range = {"Range"};
+        static constexpr const localize_text_t lt_Network = {"Network"};
         static constexpr const localize_text_t lt_Others = {"Settings"};
         static constexpr const localize_text_t lt_Temperature = {"Temperature"};
         static constexpr const localize_text_t lt_Emissivity = {"Emissivity"};
         static constexpr const localize_text_t lt_Factory_Reset = {"Factory Reset"};
+        static constexpr const localize_text_t lt_Jpg_Quality = {"JPG Quality"};
         static constexpr const localize_text_t lt_Sens_TempHighest = {"Upper Temperature"};
         static constexpr const localize_text_t lt_Sens_TempLowest = {"Lower Temperature"};
         top_config_ui.addItem(new switch_ui_t{&lt_Alarm, &alarm_config_ui});
         top_config_ui.addItem(new switch_ui_t{&lt_Sensor, &sens_config_ui});
         top_config_ui.addItem(new switch_ui_t{&lt_Range, &range_config_ui});
+        top_config_ui.addItem(new switch_ui_t{&lt_Network, &network_config_ui});
         top_config_ui.addItem(new switch_ui_t{&lt_Others, &misc_config_ui});
 
         addItem(&top_config_ui);
+
+        network_config_ui.addItem(new value_ui_t{&draw_param.net_wifi_mode, true});
+        network_config_ui.addItem(
+            new value_ui_t{&lt_Jpg_Quality, &draw_param.net_jpg_quality});
 
         alarm_config_ui.addItem(new value_ui_t{&draw_param.alarm_mode, true});
         alarm_config_ui.addItem(
@@ -1610,6 +1618,14 @@ class config_ui_t : public container_ui_t {
         misc_config_ui.addItem(new value_ui_t{&draw_param.misc_volume, true});
         misc_config_ui.addItem(
             new value_ui_t{&draw_param.misc_brightness, true});
+        misc_config_ui.addItem(
+            new value_ui_t{&draw_param.misc_autopoweroff, true});
+        misc_config_ui.addItem(
+            new value_ui_t{&draw_param.misc_sentry_mode, true});
+        misc_config_ui.addItem(
+            new value_ui_t{&draw_param.misc_sentry_interval, true});
+        misc_config_ui.addItem(new value_ui_t{&draw_param.misc_pointer, true});
+        misc_config_ui.addItem(new value_ui_t{&draw_param.misc_color, true});
         misc_config_ui.addItem(new value_ui_t{
             &lt_Factory_Reset, &draw_param.misc_backtofactory, true});
 
@@ -3078,7 +3094,7 @@ void setup(void) {
 #endif
 
     auto macaddr = draw_param.macaddr;
-    esp_read_mac(macaddr, ESP_MAC_EFUSE);
+    esp_read_mac(macaddr, ESP_MAC_WIFI_STA);
 
 #if !defined(WIFI_DISABLED)
     snprintf(draw_param.net_apmode_ssid, sizeof(draw_param.net_apmode_ssid),
@@ -3337,39 +3353,37 @@ void loop(void) {
 
     M5.update();
     
+    // **SENTRY MODE HANDLING**
+    bool sentry_active =
+        draw_param.misc_sentry_mode.get() !=
+        draw_param_t::misc_sentry_mode_t::misc_sentry_mode_off;
 
     // Ensure WiFi is enabled for Sentry Mode
     if (sentry_active && WiFi.getMode() == WIFI_OFF) {
         draw_param.net_wifi_mode = config_param_t::net_wifi_mode_connect_saved;
         WiFi.begin(); // Triggers the connection logic in main loop
     }
-    
-    // **SENTRY MODE HANDLING**
-    bool sentry_active =
-        draw_param.misc_sentry_mode.get() !=
-        draw_param_t::misc_sentry_mode_t::misc_sentry_mode_off;
+
     if (sentry_active) {
-        // Sentry mode active
-        static uint32_t sentry_display_time = 0;
-        static bool sentry_display_active = false;
-        
         // Center button single press: show SENTRY MODE for a few seconds
         if (M5.BtnC.wasClicked()) {
-            sentry_display_active = true;
-            sentry_display_time = millis();
+            const char* temp_line = nullptr;
+            char temp_str[32];
+            if (sentry_data.last_avg_temp > -100) {
+                snprintf(temp_str, sizeof(temp_str), "%.1fC", sentry_data.last_avg_temp);
+                temp_line = temp_str;
+            }
+            overlay_ui.show(64, "SENTRY MODE", temp_line);
             if (draw_param.misc_volume != draw_param.misc_volume_t::misc_volume_mute) {
                 M5.Speaker.tone(1000, 100);
             }
         }
-        
+
         // Center button hold: exit sentry mode
         if (M5.BtnC.wasHold()) {
             draw_param.misc_sentry_mode.set(draw_param_t::misc_sentry_mode_t::misc_sentry_mode_off);
             ::config_save_countdown = 60;
-            display.fillScreen(TFT_BLACK);
-            display.setTextDatum(middle_center);
-            display.setTextColor(TFT_WHITE);
-            display.drawString("Exiting Sentry", display.width() / 2, display.height() / 2);
+            overlay_ui.show(64, "Exiting Sentry");
             if (draw_param.misc_volume != draw_param.misc_volume_t::misc_volume_mute) {
                 M5.Speaker.tone(600, 200);
                 delay(100);
@@ -3377,28 +3391,6 @@ void loop(void) {
             }
             delay(1000);
         }
-        
-        // Display sentry status briefly
-        if (sentry_display_active) {
-            display.setTextDatum(middle_center);
-            display.fillScreen(TFT_BLACK);
-            display.setTextColor(0xFFE0);  // Yellow
-            display.drawString("SENTRY MODE", display.width() / 2, display.height() / 2 - 12);
-            display.setTextColor(TFT_WHITE);
-            if (sentry_data.last_avg_temp > -100) {
-                char temp_str[32];
-                snprintf(temp_str, sizeof(temp_str), "%.1fC", sentry_data.last_avg_temp);
-                display.drawString(temp_str, display.width() / 2, display.height() / 2 + 12);
-            }
-            
-            if (millis() - sentry_display_time > 3000) {
-                sentry_display_active = false;
-                display.fillScreen(TFT_BLACK);
-            }
-        } else {
-            display.fillScreen(TFT_BLACK);
-        }
-        
     }
     
     // **NORMAL MODE BUTTON HANDLING**
@@ -3415,8 +3407,9 @@ void loop(void) {
         shutdown_warning_given = false;
     }
     
-    // Low power mode - activate when battery < 20%
-    if (!low_power_mode_active && draw_param.battery_level < 20) {
+    // Low power mode - activate when battery < 20% and not charging
+    if (!low_power_mode_active && draw_param.battery_level < 20 &&
+        !draw_param.battery_state) {
         low_power_mode_active = true;
         // Kill WiFi
         if (draw_param.net_wifi_mode != draw_param.net_wifi_mode_t::net_wifi_mode_off) {

@@ -6,9 +6,53 @@
 #include <stddef.h>
 
 #include <M5GFX.h>
-#include <WiFiClient.h>
 #include "jpg/jpge.h"
 
+#if !defined(WIFI_DISABLED)
+#include <WiFiClient.h>
+#else
+class WiFiClient;
+#endif
+#if defined(WIFI_DISABLED)
+class screenshot_streamer_t : public jpge::output_stream {
+   public:
+    screenshot_streamer_t(void) = default;
+
+    static void streamTask(void*) {
+    }
+
+    bool isRequested(void) const {
+        return false;
+    }
+    void requestScreenShot(WiFiClient*) {
+    }
+
+    bool initCapture(uint16_t, uint16_t) {
+        return false;
+    }
+    bool addQueue(M5Canvas*, uint16_t) {
+        return false;
+    }
+
+    enum process_result_t {
+        pr_nothing,
+        pr_error,
+        pr_progress,
+        pr_complete,
+    };
+
+    process_result_t processCapture(void) {
+        return pr_nothing;
+    }
+
+    uint get_size(void) const override {
+        return 0;
+    }
+    bool put_buf(const void*, int) override {
+        return true;
+    }
+};
+#else
 class screenshot_streamer_t : public jpge::output_stream {
     QueueHandle_t _queue_canvas;
     QueueHandle_t _queue_client;
@@ -63,5 +107,6 @@ class screenshot_streamer_t : public jpge::output_stream {
     }
     bool put_buf(const void* Pbuf, int len) override;
 };
+#endif
 
 extern screenshot_streamer_t screenshot_holder;
