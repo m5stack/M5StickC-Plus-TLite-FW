@@ -4,28 +4,35 @@
 
 #include "command_processor.hpp"
 #include <esp_log.h>
-#include <esp_sntp.h>
-#include <esp_wifi.h>
+#include <esp_system.h>
 #include <driver/gpio.h>
 
 #include <vector>
 
 #include <Preferences.h>
+
+#if !defined(WIFI_DISABLED)
+#include <esp_sntp.h>
+#include <esp_wifi.h>
 #include <WiFiServer.h>
 #include <DNSServer.h>
+#endif
 
 #include <ArduinoJson.hpp>  // https://github.com/bblanchon/ArduinoJson/
 #include <M5Unified.hpp>    // https://github.com/m5stack/M5Unified/
+#if !defined(WIFI_DISABLED)
 #include <lgfx/utility/lgfx_qrcode.h>
+#endif
 
 #include "common_header.h"
 #include "screenshot_streamer.hpp"
 #include "jpg/jpge.h"
 
-#include "resource/bmp_logo.h"
 #include "resource/wav_enter.h"
 
+#if !defined(WIFI_DISABLED)
 DNSServer dnsServer;
+#endif
 
 extern const unsigned char gWav_Click[112];
 
@@ -36,12 +43,13 @@ auto& display = M5.Display;
 screenshot_streamer_t screenshot_holder;
 draw_param_t draw_param;
 
+#if !defined(WIFI_DISABLED)
 // Preset WiFi networks
 struct wifi_preset_t {
     const char* ssid;
     const char* password;
 } wifi_presets[3] = {
-    {"IoTA", "keyforaccesstothisrestrictedwirelessnnetwork"},
+    {"", ""},
     {"", ""},  // work: empty
     {"", ""}   // custom: empty
 };
@@ -50,6 +58,7 @@ static int current_preset_idx = 0;
 static constexpr const char* ntp_server[] = {"0.pool.ntp.org", "1.pool.ntp.org",
                                              "2.pool.ntp.org"};
 volatile bool need_wifi_reconnect         = false;
+#endif
 
 extern "C" {
 void esp_timer_impl_update_apb_freq(
@@ -130,6 +139,7 @@ static void soundUSBDisconnected(void) {
         M5.Speaker.tone(659.255f, 64, 0, false);  // E5
     }
 }
+#if !defined(WIFI_DISABLED)
 static void soundWiFiConnected(void) {
     if (draw_param.misc_volume != draw_param.misc_volume_t::misc_volume_mute) {
         M5.Speaker.tone(1046.502f, 64, 0, false);  // C6
@@ -142,21 +152,18 @@ static void soundWiFiDisconnected(void) {
         M5.Speaker.tone(1174.659f, 64, 0, false);  // D6
     }
 }
+#endif
 
 // Sentry Mode task for periodic temperature reporting
-struct SentryData {
-    uint32_t last_report_time = 0;
-    float last_avg_temp = 0;
-    float last_min_temp = 0;
-    float last_max_temp = 0;
-};
-
 SentryData sentry_data;
 
 void sentrymodeTask(void*) {
     while (1) {
-        if (draw_param.misc_sentry_mode.get() != draw_param_t::misc_sentry_mode_t::misc_sentry_mode_off) {
-            uint32_t report_interval = config_param_t::misc_sentry_interval_value[draw_param.misc_sentry_interval];
+        if (draw_param.misc_sentry_mode.get() !=
+            draw_param_t::misc_sentry_mode_t::misc_sentry_mode_off) {
+            uint32_t report_interval =
+                config_param_t::misc_sentry_interval_value[
+                    draw_param.misc_sentry_interval.get()];
             uint32_t now = millis() / 1000;
             
             if ((now - sentry_data.last_report_time) >= report_interval) {
@@ -240,7 +247,6 @@ static constexpr const char KEY_NET_TIMEZONE[]     = "timezone";
 static constexpr const char KEY_MISC_CPUSPEED[]    = "cpuspeed";
 static constexpr const char KEY_MISC_BRIGHTNESS[]  = "brightness";
 static constexpr const char KEY_MISC_VOLUME[]      = "volume";
-static constexpr const char KEY_MISC_LANGUAGE[]    = "language";
 static constexpr const char KEY_MISC_LAYOUT[]      = "layout";
 static constexpr const char KEY_MISC_COLOR[]       = "color";
 static constexpr const char KEY_MISC_POINTER[]     = "pointer";
@@ -277,9 +283,11 @@ void config_param_t::saveNvs(void) {
     pref.putUChar(KEY_RANGE_AUTOSWITCH, range_autoswitch);
     pref.putUShort(KEY_RANGE_UPPER, range_temp_upper);
     pref.putUShort(KEY_RANGE_LOWER, range_temp_lower);
+#if !defined(WIFI_DISABLED)
     pref.putUChar(KEY_NET_WIFI_MODE, net_wifi_mode);
     pref.putUChar(KEY_NET_JPGQUALITY, net_jpg_quality);
     pref.putInt(KEY_NET_TIMEZONE, oncloud_timezone_sec);
+#endif
     pref.putUChar(KEY_MISC_BRIGHTNESS, misc_brightness);
     pref.putUChar(KEY_MISC_AUTOPOWEROFF, misc_autopoweroff);
     pref.putUChar(KEY_MISC_SENTRY_INTERVAL, misc_sentry_interval);
@@ -314,11 +322,13 @@ void config_param_t::loadNvs(void) {
             KEY_RANGE_AUTOSWITCH, range_autoswitch);
         range_temp_upper = pref.getUShort(KEY_RANGE_UPPER, range_temp_upper);
         range_temp_lower = pref.getUShort(KEY_RANGE_LOWER, range_temp_lower);
+#if !defined(WIFI_DISABLED)
         net_wifi_mode = (net_wifi_mode_t)pref.getUChar(
             KEY_NET_WIFI_MODE, net_wifi_mode);
         net_jpg_quality = pref.getUChar(KEY_NET_JPGQUALITY, net_jpg_quality);
         oncloud_timezone_sec =
             pref.getInt(KEY_NET_TIMEZONE, oncloud_timezone_sec);
+#endif
         misc_cpuspeed =
             (misc_cpuspeed_t)pref.getUChar(KEY_MISC_CPUSPEED, misc_cpuspeed);
         misc_brightness = (misc_brightness_t)pref.getUChar(KEY_MISC_BRIGHTNESS,
@@ -375,7 +385,9 @@ void config_param_t::setEmissivity(uint8_t emissivity) {
 
 void config_param_t::setTimeZoneSec(int32_t sec) {
     oncloud_timezone_sec = sec;
+#if !defined(WIFI_DISABLED)
     configTime(sec, 0, ntp_server[0], ntp_server[1], ntp_server[2]);
+#endif
 }
 
 void config_param_t::referenceModeChange(int add) {
@@ -535,6 +547,7 @@ void value_smooth_t::set(int32_t default_value) {
 
 // static constexpr const uint32_t jpeg_len_max = 8192 * 3;
 
+#if !defined(WIFI_DISABLED)
 screenshot_streamer_t::screenshot_streamer_t(void) {
     // JPEGエンコード待ちキューの数 (メモリ節約のため1とする)
     _queue_canvas = xQueueCreate(1, sizeof(screenshot_streamer_t::queue_ss_t));
@@ -691,6 +704,7 @@ screenshot_streamer_t::process_result_t screenshot_streamer_t::processCapture(
     }
     if (queue_ss.y == 0) {
         bool request  = uxQueueMessagesWaiting(_queue_client);
+    #endif
         _is_requested = request;
         if (!request) {
             xQueueReceive(_queue_canvas, &queue_ss, 0);
@@ -806,6 +820,7 @@ struct ui_base_t {
     uint8_t _prev_modify_count;
 };
 
+#if !defined(WIFI_DISABLED)
 class qrcode_ui_t : public ui_base_t {
    public:
     std::string _qr_string = "teststring";
@@ -851,6 +866,7 @@ class qrcode_ui_t : public ui_base_t {
         setTargetRect({display.width() >> 1, display.height() >> 1, 0, 0});
     }
 };
+#endif
 
 class overlay_ui_t : public ui_base_t {
     static constexpr const size_t lines_max = 6;
@@ -962,12 +978,12 @@ class overlay_ui_t : public ui_base_t {
     }
 };
 
+#if !defined(WIFI_DISABLED)
 qrcode_ui_t qrcode_ui;
+#endif
 overlay_ui_t overlay_ui;
 
 void config_param_t::misc_backtofactory_func(uint8_t) {
-    WiFi.mode(WIFI_MODE_STA);
-    WiFi.disconnect(true, true);
     draw_param.loadDefault();
     draw_param.saveNvs();
     overlay_ui.show(64, "Reset Done.");
@@ -1040,7 +1056,9 @@ class control_ui_t : public ui_base_t {
         // M5.Speaker.tone(3300, 80);
         soundExit();
         setCursorTarget(this);
+#if !defined(WIFI_DISABLED)
         qrcode_ui.hide();
+#endif
         overlay_ui.hide();
     }
     bool smoothMove(void) override {
@@ -1403,6 +1421,7 @@ class token_ui_t : public container_ui_t {
     }
 };
 
+#if !defined(WIFI_DISABLED)
 class qr_ui_t : public container_ui_t {
     const std::string* _property;
 
@@ -1461,6 +1480,7 @@ class qr_ui2_t : public qr_ui_t {
         return control_ui_t::enter(parent);
     }
 };
+#endif
 
 class switch_ui_t : public container_ui_t {
     itext_ui_t title;
@@ -1552,26 +1572,15 @@ class config_ui_t : public container_ui_t {
     }
 
     void setup(void) override {
-        static constexpr const localize_text_t lt_Network = {"Network"};
-        static constexpr const localize_text_t lt_Cloud = {"Cloud"};
         static constexpr const localize_text_t lt_Alarm = {"Alarm"};
         static constexpr const localize_text_t lt_Sensor = {"Sensor"};
         static constexpr const localize_text_t lt_Range = {"Range"};
         static constexpr const localize_text_t lt_Others = {"Settings"};
-
-        static constexpr const localize_text_t lt_LAN_QR_IP = {"LAN Monitor (IP)"};
-        static constexpr const localize_text_t lt_LAN_QR_mDNS = {"LAN Monitor (mDNS)"};
-        static constexpr const localize_text_t lt_Cloud_Online_QR = {"Cloud Online QR"};
-        static constexpr const localize_text_t lt_Cloud_Confirm_Code = {"Cloud Confirm Code"};
         static constexpr const localize_text_t lt_Temperature = {"Temperature"};
         static constexpr const localize_text_t lt_Emissivity = {"Emissivity"};
-        static constexpr const single_text_t lt_Language = {"Language"};
-        static constexpr const localize_text_t lt_LAN_Stream_Quality = {"LAN Stream Quality"};
         static constexpr const localize_text_t lt_Factory_Reset = {"Factory Reset"};
         static constexpr const localize_text_t lt_Sens_TempHighest = {"Upper Temperature"};
         static constexpr const localize_text_t lt_Sens_TempLowest = {"Lower Temperature"};
-
-        top_config_ui.addItem(new switch_ui_t{&lt_Network, &network_config_ui});
         top_config_ui.addItem(new switch_ui_t{&lt_Alarm, &alarm_config_ui});
         top_config_ui.addItem(new switch_ui_t{&lt_Sensor, &sens_config_ui});
         top_config_ui.addItem(new switch_ui_t{&lt_Range, &range_config_ui});
@@ -1579,12 +1588,6 @@ class config_ui_t : public container_ui_t {
 
         addItem(&top_config_ui);
 
-        network_config_ui.addItem(
-            new value_ui_t{&draw_param.net_wifi_mode, true});
-        network_config_ui.addItem(
-            new qr_ui_t{&lt_LAN_QR_IP, &draw_param.net_url_ip});
-        network_config_ui.addItem(
-            new qr_ui_t{&lt_LAN_QR_mDNS, &draw_param.net_url_mdns});
         alarm_config_ui.addItem(new value_ui_t{&draw_param.alarm_mode, true});
         alarm_config_ui.addItem(
             new value_ui_t{&lt_Temperature, &draw_param.alarm_temperature});
@@ -1607,8 +1610,6 @@ class config_ui_t : public container_ui_t {
         misc_config_ui.addItem(new value_ui_t{&draw_param.misc_volume, true});
         misc_config_ui.addItem(
             new value_ui_t{&draw_param.misc_brightness, true});
-        misc_config_ui.addItem(new value_ui_t{&lt_LAN_Stream_Quality,
-                                              &draw_param.net_jpg_quality});
         misc_config_ui.addItem(new value_ui_t{
             &lt_Factory_Reset, &draw_param.misc_backtofactory, true});
 
@@ -1697,6 +1698,10 @@ class config_ui_t : public container_ui_t {
 config_ui_t config_ui;
 
 void config_param_t::net_wifi_mode_func(net_wifi_mode_t v) {
+#if defined(WIFI_DISABLED)
+    draw_param.request_wifi_state = 0;
+    (void)v;
+#else
     switch (v) {
         case net_wifi_mode_t::net_wifi_mode_off:
             draw_param.request_wifi_state = 0;
@@ -1711,6 +1716,7 @@ void config_param_t::net_wifi_mode_func(net_wifi_mode_t v) {
             draw_param.request_wifi_state = 0;
             break;
     }
+#endif
 }
 
 void config_param_t::misc_brightness_func(misc_brightness_t v) {
@@ -1737,9 +1743,13 @@ void config_param_t::misc_cpuspeed_func(misc_cpuspeed_t v) {
     rtc_clk_apb_freq_update(apb);
     esp_timer_impl_update_apb_freq(apb / MHZ);
 
+#if !defined(WIFI_DISABLED)
     if (reconnect) {
         need_wifi_reconnect = true;
     }
+#else
+    (void)reconnect;
+#endif
 }
 
 void config_param_t::sens_refreshrate_func(sens_refreshrate_t v) {
@@ -1804,57 +1814,7 @@ class header_ui_t : public ui_base_t {
             }
         } else {
             if ((param->draw_count & 3) == 0) {
-                auto status = WiFi.status();
-
-                char cbuf[64];
-
-                if (WiFi.getMode() == WIFI_AP ||
-                    WiFi.getMode() == WIFI_AP_STA) {
-                    _text.assign(cbuf,
-                                 snprintf(cbuf, sizeof(cbuf), "SSID:%s  /  ",
-                                          draw_param.net_apmode_ssid));
-                    _text.append(cbuf,
-                                 snprintf(cbuf, sizeof(cbuf), "PWD:%s  /  ",
-                                          draw_param.net_apmode_pass));
-                    _text.append(
-                        cbuf,
-                        snprintf(
-                            cbuf, sizeof(cbuf), "AP IP:%s  /  ",
-                            draw_param.net_apmode_ipaddr.toString().c_str()));
-                } else if (WiFi.getMode() == WIFI_STA) {
-                    if (draw_param.sys_ssid.empty()) {
-                        if (param->net_wifi_mode ==
-                            param->net_wifi_mode_connect_saved) {
-                            _text =
-                                "Connecting to saved networks...  ";
-                        } else {
-                            _text = "Configure WiFi first  ";
-                        }
-                    } else if (WiFi.isConnected()) {
-                        _text.assign(
-                            cbuf, snprintf(cbuf, sizeof(cbuf), "SSID:%s  /  ",
-                                           draw_param.sys_ssid.c_str()));
-                        _text.append(
-                            cbuf,
-                            snprintf(cbuf, sizeof(cbuf), "mDNS:%s.local  /  ",
-                                     draw_param.net_apmode_ssid));
-                        _text.append(
-                            cbuf, snprintf(cbuf, sizeof(cbuf), "STA IP:%s  /  ",
-                                           WiFi.localIP().toString().c_str()));
-                    } else {
-                        static constexpr const char* status_tbl[] = {
-                            "idle",        "no ssid avail",  "scan completed",
-                            "connected",   "connect failed", "connection lost",
-                            "disconnected"};
-                        if ((uint32_t)status < SIZEOF_ARRAY(status_tbl)) {
-                            _text = status_tbl[status];
-                        } else {
-                            _text.empty();
-                        }
-                    }
-                } else {
-                    _text = "Config";
-                }
+                _text = "Config";
                 _text_width = display.textWidth(_text.c_str());
             }
             --_text_pos;
@@ -1881,39 +1841,7 @@ class header_ui_t : public ui_base_t {
         }
         canvas->setTextColor(TFT_WHITE);
 
-        enum show_mode_t {
-            show_none,
-            show_apssid,
-            show_passwd,
-            show_apip,
-            show_staip,
-            show_stassid,
-            show_mdns,
-            show_need_setup,
-        };
-        show_mode_t show_mode = show_none;
-
         int xpos = _client_rect.right();
-        {
-            size_t level = 0;
-            if (param->net_wifi_mode != param->net_wifi_mode_off) {
-                level = 1;
-            }
-            if (WiFi.status() == WL_CONNECTED) {
-                auto rssi = WiFi.RSSI();
-                level     = (rssi <= -96)   ? 2
-                            : (rssi <= -85) ? 3
-                            : (rssi <= -75) ? 4
-                                            : 5;
-            }
-            xpos -= 14;
-            // canvas->drawBitmap(xpos+1, _client_rect.y - canvas_y,
-            // icon_wifi[level], 16, 12, TFT_WHITE);
-            canvas->pushImage(xpos, _client_rect.y - canvas_y, 16, 14,
-                              icon_wifi565[level], 0x2002);
-        }
-
-        // Cloud functionality has been removed - no cloud icon drawing
 
         if (param->in_config_mode) {
             {
@@ -2787,9 +2715,15 @@ uint8_t changeLayout(uint8_t layout_idx) {
 }
 
 void drawTask(void*) {
+#if !defined(WIFI_DISABLED)
     ui_base_t* ui_list[] = {&battery_ui, &text_ui,   &hist_ui,
                             &image_ui,   &graph_ui,  &config_ui,
                             &header_ui,  &qrcode_ui, &overlay_ui};
+#else
+    ui_base_t* ui_list[] = {&battery_ui, &text_ui,  &hist_ui,
+                            &image_ui,  &graph_ui, &config_ui,
+                            &header_ui, &overlay_ui};
+#endif
     static constexpr const uint32_t disp_buf_height = 16;
     static constexpr const size_t disp_buf_count =
         3;  // 描画バッファの数。jpegエンコーダのqueueにセットする分があるため3とする
@@ -2914,6 +2848,7 @@ void drawTask(void*) {
     display.endWrite();
 }
 
+#if !defined(WIFI_DISABLED)
 static bool sync_rtc_ntp(void) {
     if (sntp_get_sync_status() != SNTP_SYNC_STATUS_COMPLETED) return false;
 
@@ -3073,6 +3008,7 @@ static void wifiTask(void*) {
         }
     }
 }
+#endif
 
 void setup(void) {
     // 最大の連続メモリ領域を後に残すため、敢えてここで確保しておき、準備が終わった後に解放する。
@@ -3088,7 +3024,7 @@ void setup(void) {
     display.setTextDatum(middle_center);
     display.setTextColor(TFT_WHITE, TFT_BLACK);
     display.fillScreen(TFT_BLACK);
-    display.drawString("T-Lite (Lite)", display.width() / 2, display.height() / 2);
+    display.drawString("THERMAL IMAGER", display.width() / 2, display.height() / 2);
 
     {
         auto cfg             = M5.Speaker.config();
@@ -3128,6 +3064,7 @@ void setup(void) {
             draw_param.graph_data.data_len * sizeof(uint16_t));
     }
 
+#if !defined(WIFI_DISABLED)
     // webサーバタスクは loopと同じ APP_CPUプライオリティ1
     // を指定、優劣をつけない
     xTaskCreatePinnedToCore(webserverTask, "webTask", 6144, &draw_param, 1,
@@ -3138,13 +3075,16 @@ void setup(void) {
     //                         PRO_CPU_NUM);
     xTaskCreate(screenshot_streamer_t::streamTask, "stream", 2048,
                 &screenshot_holder, 1, nullptr);
+#endif
 
     auto macaddr = draw_param.macaddr;
-    esp_read_mac(macaddr, ESP_MAC_WIFI_SOFTAP);
-    snprintf(draw_param.net_apmode_ssid, sizeof(draw_param.net_apmode_ssid),
-             "ThermalCamera");
+    esp_read_mac(macaddr, ESP_MAC_EFUSE);
 
-    draw_param.net_hostname = "thermalcamera";
+#if !defined(WIFI_DISABLED)
+    snprintf(draw_param.net_apmode_ssid, sizeof(draw_param.net_apmode_ssid),
+             "THERMAL_DEVICE");
+
+    draw_param.net_hostname = "thermal-device";
     draw_param.net_hostname += ".local";
 
     char cbuf[32];
@@ -3167,8 +3107,13 @@ void setup(void) {
     // draw_param.net_apmode_ipaddr.toString().c_str()); draw_param.net_ap_url =
     // cbuf;
     draw_param.net_ap_url = draw_param.net_url_mdns + "wifi";
+#endif
 
     draw_param.loadNvs();
+
+    // Default to offline mode on boot as requested
+    draw_param.net_wifi_mode = config_param_t::net_wifi_mode_off;
+    WiFi.mode(WIFI_OFF);
 
     display.setBrightness(
         draw_param.misc_brightness_value[draw_param.misc_brightness]);
@@ -3182,11 +3127,16 @@ void setup(void) {
 
     // check_oncloud();
     config_ui.setup();
+#if !defined(WIFI_DISABLED)
     qrcode_ui.setTargetRect(
         {display.width() >> 1, display.height() >> 1, 0, 0});
+#endif
 
     heap_caps_free(dummy_alloc);
 
+#if !defined(WIFI_DISABLED)
+    /* 
+    // Disabled to ensure offline boot
     {
         wifi_config_t current_conf;
         WiFi.setHostname(draw_param.net_hostname.c_str());
@@ -3201,10 +3151,12 @@ void setup(void) {
         //     WiFi.begin("YOUR_DEFAULT_SSID", "YOUR_DEFAULT_PASSWORD");
         // }
     }
+    */
 
     xTaskCreatePinnedToCore(wifiTask, "wifiTask", 4096, nullptr, 3, nullptr,
                             PRO_CPU_NUM);
     delay(512);
+#endif
 
     // Cloud functionality has been removed
 
@@ -3385,8 +3337,18 @@ void loop(void) {
 
     M5.update();
     
+
+    // Ensure WiFi is enabled for Sentry Mode
+    if (sentry_active && WiFi.getMode() == WIFI_OFF) {
+        draw_param.net_wifi_mode = config_param_t::net_wifi_mode_connect_saved;
+        WiFi.begin(); // Triggers the connection logic in main loop
+    }
+    
     // **SENTRY MODE HANDLING**
-    if (draw_param.misc_sentry_mode) {
+    bool sentry_active =
+        draw_param.misc_sentry_mode.get() !=
+        draw_param_t::misc_sentry_mode_t::misc_sentry_mode_off;
+    if (sentry_active) {
         // Sentry mode active
         static uint32_t sentry_display_time = 0;
         static bool sentry_display_active = false;
@@ -3437,10 +3399,10 @@ void loop(void) {
             display.fillScreen(TFT_BLACK);
         }
         
-        return;
     }
     
     // **NORMAL MODE BUTTON HANDLING**
+    if (!sentry_active) {
     // Track last activity time for auto-poweroff
     static uint32_t last_activity_time = millis();
     static bool low_power_mode_active = false;
@@ -3585,6 +3547,7 @@ void loop(void) {
             }
         }
         //*/
+    }
     }
 
     // 温度センサからデータ取得

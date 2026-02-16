@@ -134,257 +134,208 @@ static bool response_404(draw_param_t* draw_param, connection_t* conn) {
 
 static bool response_main(draw_param_t* draw_param, connection_t* conn) {
     auto client = &conn->client;
-
-    static constexpr const char html_1[] =
-        "<html><head><title>T-Lite</title>\n<script>\n"
-        "function f(d) { "
-        "fetch(\"/"
-        "param?\"+d).then((response)=>response.json()).then((o)=>{for(const k "
-        "in o){document.getElementById(k).value=o[k];}});\n return false;};\n"
-        "window.addEventListener('DOMContentLoaded', function() {f(\"\");})\n"
-        "</script>\n<style>\n"
-        "body,select,button{font-size:4.5vw !important; font-size:16px}\n"
-        ".ctn{margin:0 "
-        "auto;width:90%;height:100%;display:flex;flex-direction:column}"
-        "input{font-size: 4.5vw;width:100%;height:5vw}\n"
-        "input[type=\"text\"]{height:7vw}\n"
-        "ul{list-style:none;padding-left:0}\n"
-        ".ft{flex:0 0 auto;padding:10px 0;text-align:center}\n"
-        ".tgl "
-        "label{text-align:center;display:block;border-radius:10px;color:#FFF;"
-        "background:#3DA7C7;padding:8px;margin-bottom:3px;cursor:pointer}"
-        ".tgl input[type=\"checkbox\"],"
-        ".tgl input[type=\"checkbox\"] +ul{display:none}"
-        ".tgl input[type=\"checkbox\"]:checked +ul{display:block}"
-        ".imgbx{margin:2vw 0;padding:2vw;border-radius:0 0 2vw "
-        "2vw;text-align:center;background-color:#0f0f0f}\n"
-        ".imgbx h2{margin:0;font-size:8vw;font-weight:300;color:#2eb840}\n"
-        ".imgbx img{width:100%}\n"
-        "</style></head><body>"
-        "<div class='ctn'>\n"
-        "<div class='imgbx'><img src='/stream'><h2>T-Lite</h2></div>\n"
-        "<div class='tgl'>";
-
     std::string strbuf;
-    strbuf.reserve(8192);
     char cbuf[64];
 
-    strbuf += html_1;
+    strbuf = "<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>T-Lite Control</title><style>"
+        "body{font-family:sans-serif;margin:0;padding:10px;background:#1a1a1a;color:#eee}"
+        "h1{margin:0 0 20px;text-align:center;font-size:24px;color:#2eb840}"
+        ".grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px}"
+        ".card{background:#2a2a2a;padding:15px;border-radius:8px;border:1px solid #444}"
+        ".card h3{margin:0 0 10px;font-size:14px;color:#3DA7C7}"
+        "select,input[type=range]{width:100%;padding:8px;margin:5px 0;border:1px solid #555;background:#333;color:#eee;border-radius:4px}"
+        ".sentry{grid-column:1/-1;background:#0a3a2a;border:2px solid #2eb840;padding:20px;text-align:center;font-size:18px}"
+        ".sentry select{font-size:16px;padding:10px}"
+        ".group{margin:15px 0}"
+        ".group label{display:block;font-weight:bold;margin-bottom:5px;font-size:12px;color:#aaa}"
+        "button{width:100%;padding:10px;margin:10px 0 0;background:#2eb840;color:#000;border:none;border-radius:4px;font-weight:bold;cursor:pointer}"
+        ".info{font-size:12px;color:#999;margin-top:10px;text-align:center}"
+        "</style></head><body>"
+        "<h1>T-Lite Control</h1>";
 
-    strbuf +=
-        "<label for='tgl_alarm'>Alarm</label><input type='checkbox' "
-        "id='tgl_alarm'>\n<ul>\n"
-        " <li> Alarm Mode: <select id='alarm_mode' onchange='f(\"alarm_mode=\" "
-        "+ this.options[this.selectedIndex].value)'>";
-    for (int i = 0; i < draw_param->alarm_mode_max; ++i) {
-        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->alarm_mode.getText(i)));
-    }
-    strbuf += "</select></li>\n";
-
-    strbuf += " <li> Temperature: <span id='at'>";
-    strbuf.append(cbuf,
-                  snprintf(cbuf, sizeof(cbuf), "%3.1f",
-                           convertRawToCelsius(draw_param->alarm_temperature)));
-    strbuf +=
-        "</span><br>\n<input width='400em' type='range' min='-50' max='350' "
-        "step='0.5' id='alarm_temperature' onchange='f(\"alarm_temperature=\" "
-        "+ this.value)' "
-        "oninput='document.getElementById(\"at\").innerText=this.value'></li>";
-    strbuf +=
-        " <li> Reference: <select id='alarm_reference' "
-        "onchange='f(\"alarm_reference=\" + "
-        "this.options[this.selectedIndex].value)'>";
-    for (int i = 0; i < draw_param->alarm_reference_max; ++i) {
-        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->alarm_reference.getText(i)));
-    }
-    strbuf += "</select></li>\n</ul>\n";
-    strbuf +=
-        "<label for='tgl_sensor'>Sensor</label><input type='checkbox' "
-        "id='tgl_sensor'>\n<ul>\n"
-        " <li> Refresh Rate: <select id='sens_refreshrate' "
-        "onchange='f(\"sens_refreshrate=\" + "
-        "this.options[this.selectedIndex].value)'>";
-    for (int i = 0; i < draw_param->sens_refreshrate_max; ++i) {
-        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->sens_refreshrate.getText(i)));
-    }
-    strbuf += "</select></li>\n";
-
-    strbuf +=
-        " <li>Noise Filter: <select id='sens_noisefilter' "
-        "onchange='f(\"sens_noisefilter=\" + "
-        "this.options[this.selectedIndex].value)'>";
-    for (int i = 0; i < draw_param->sens_noisefilter_max; ++i) {
-        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->sens_noisefilter.getText(i)));
-    }
-    strbuf += "</select></li>\n";
-
-    strbuf +=
-        " <li>Monitor Area: <select id='sens_monitorarea' "
-        "onchange='f(\"sens_monitorarea=\" + "
-        "this.options[this.selectedIndex].value)'>";
-    for (int i = 0; i < draw_param->sens_monitorarea_max; ++i) {
-        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->sens_monitorarea.getText(i)));
-    }
-    strbuf += "</select></li>\n";
-
-    strbuf += " <li> Emissivity: <span id='em'>";
-    strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf), "%d",
-                                 draw_param->sens_emissivity.get()));
-    // strbuf += draw_param->sens_emissivity.getText();
-    strbuf +=
-        "</span><br>\n<input type='range' min='20' max='100' "
-        "id='sens_emissivity' onchange='f(\"sens_emissivity=\" + this.value)' "
-        "oninput='document.getElementById(\"em\").innerText=this.value'></"
-        "li>\n</ul>\n";
-
-    strbuf +=
-        "<label for='tgl_range'>Range</label><input type='checkbox' "
-        "id='tgl_range'>\n<ul>\n"
-        "<li>Auto Range: <select id='range_autoswitch' "
-        "onchange='f(\"range_autoswitch=\" + "
-        "this.options[this.selectedIndex].value)'>";
-    for (int i = 0; i < draw_param->range_autoswitch_max; ++i) {
-        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->range_autoswitch.getText(i)));
-    }
-    strbuf += "</select></li>\n";
-    strbuf += " <li> Upper Temperature: <span id='rh'>";
-    strbuf.append(cbuf,
-                  snprintf(cbuf, sizeof(cbuf), "%3.1f",
-                           convertRawToCelsius(draw_param->range_temp_upper)));
-    strbuf +=
-        "</span><br>\n<input width='400em' type='range' min='-50' max='350' "
-        "step='0.5' id='range_temp_upper' onchange='f(\"range_temp_upper=\" "
-        "+ this.value)' "
-        "oninput='document.getElementById(\"rh\").innerText=this.value'></li>";
-    strbuf += " <li> Lower Temperature: <span id='rl'>";
-    strbuf.append(cbuf,
-                  snprintf(cbuf, sizeof(cbuf), "%3.1f",
-                           convertRawToCelsius(draw_param->range_temp_lower)));
-    strbuf +=
-        "</span><br>\n<input width='400em' type='range' min='-50' max='350' "
-        "step='0.5' id='range_temp_lower' onchange='f(\"range_temp_lower=\" "
-        "+ this.value)' "
-        "oninput='document.getElementById(\"rl\").innerText=this.value'></"
-        "li>\n</ul>\n";
-
-    strbuf +=
-        "<label for='tgl_network'>Network</label><input type='checkbox' "
-        "id='tgl_network'>\n<ul>\n"
-        "<li>Sentry Mode: <select id='misc_sentry_mode' "
-        "onchange='f(\"misc_sentry_mode=\" + "
-        "this.options[this.selectedIndex].value)'>";
+    // Sentry Mode - Big prominent control
+    strbuf += "<div class='sentry'><b>SENTRY MODE</b><br>";
+    strbuf += "<select id='misc_sentry_mode' onchange='s(\"misc_sentry_mode\",this.value)'>";
     for (int i = 0; i < draw_param->misc_sentry_mode_max; ++i) {
         strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
+                                     "<option value=\"%d\"%s>%s</option>", i,
+                                     i == draw_param->misc_sentry_mode.get() ? " selected" : "",
                                      draw_param->misc_sentry_mode.getText(i)));
     }
-    strbuf += "</select></li>\n";
-
-    strbuf +=
-        "<li>Sentry Interval: <select id='misc_sentry_interval' "
-        "onchange='f(\"misc_sentry_interval=\" + "
-        "this.options[this.selectedIndex].value)'>";
+    strbuf += "</select><div class='group' style='margin-top:10px'><label>Interval</label>";
+    strbuf += "<select id='misc_sentry_interval' onchange='s(\"misc_sentry_interval\",this.value)'>";
     for (int i = 0; i < draw_param->misc_sentry_interval_max; ++i) {
         strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
+                                     "<option value=\"%d\"%s>%s</option>", i,
+                                     i == draw_param->misc_sentry_interval.get() ? " selected" : "",
                                      draw_param->misc_sentry_interval.getText(i)));
     }
-    strbuf += "</select></li>\n</ul>\n";
+    strbuf += "</select></div></div>";
 
-    strbuf +=
-        "<label for='tgl_misc'>Others</label><input type='checkbox' "
-        "id='tgl_misc'>\n<ul>\n"
-        "<li>CPU Speed: <select id='misc_cpuspeed' "
-        "onchange='f(\"misc_cpuspeed=\" + "
-        "this.options[this.selectedIndex].value)'>";
-    for (int i = 0; i < draw_param->misc_cpuspeed_max; ++i) {
+    strbuf += "<div class='grid'>";
+    
+    // Alarm
+    strbuf += "<div class='card'><h3>ALARM</h3>";
+    strbuf += "<div class='group'><label>Mode</label>";
+    strbuf += "<select id='alarm_mode' onchange='s(\"alarm_mode\",this.value)'>";
+    for (int i = 0; i < draw_param->alarm_mode_max; ++i) {
         strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->misc_cpuspeed.getText(i)));
+                                     "<option value=\"%d\"%s>%s</option>", i,
+                                     i == draw_param->alarm_mode.get() ? " selected" : "",
+                                     draw_param->alarm_mode.getText(i)));
     }
-    strbuf += "</select></li>\n";
-
-    strbuf +=
-        "<li>Sound Volume: <select id='misc_volume' "
-        "onchange='f(\"misc_volume=\" + "
-        "this.options[this.selectedIndex].value)'>";
-    for (int i = 0; i < draw_param->misc_volume_max; ++i) {
+    strbuf += "</select></div>";
+    strbuf += "<div class='group'><label>Reference</label>";
+    strbuf += "<select id='alarm_reference' onchange='s(\"alarm_reference\",this.value)'>";
+    for (int i = 0; i < draw_param->alarm_reference_max; ++i) {
         strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->misc_volume.getText(i)));
+                                     "<option value=\"%d\"%s>%s</option>", i,
+                                     i == draw_param->alarm_reference.get() ? " selected" : "",
+                                     draw_param->alarm_reference.getText(i)));
     }
-    strbuf += "</select></li>\n";
+    strbuf += "</select></div>";
+    strbuf += "<div class='group'><label>";
+    strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf), "Temp: %.1fC",
+                                 convertRawToCelsius(draw_param->alarm_temperature)));
+    strbuf += "</label>";
+    strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
+                                 "<input type='range' min='-50' max='350' step='0.5' id='alarm_temperature' value='%.1f' onchange='s(\"alarm_temperature\",this.value)'>",
+                                 convertRawToCelsius(draw_param->alarm_temperature)));
+    strbuf += "</div></div>";
 
-    strbuf +=
-        "<li>LCD Brightness: <select id='misc_brightness' "
-        "onchange='f(\"misc_brightness=\" + "
-        "this.options[this.selectedIndex].value)'>";
-    for (int i = 0; i < draw_param->misc_brightness_max; ++i) {
+    // Sensor
+    strbuf += "<div class='card'><h3>SENSOR</h3>";
+    strbuf += "<div class='group'><label>Refresh</label>";
+    strbuf += "<select id='sens_refreshrate' onchange='s(\"sens_refreshrate\",this.value)'>";
+    for (int i = 0; i < draw_param->sens_refreshrate_max; ++i) {
         strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->misc_brightness.getText(i)));
+                                     "<option value=\"%d\"%s>%s</option>", i,
+                                     i == draw_param->sens_refreshrate.get() ? " selected" : "",
+                                     draw_param->sens_refreshrate.getText(i)));
     }
-    strbuf += "</select></li>\n";
-
-    strbuf += "<li> LAN Stream Quality: <span id='jq'>";
-    strbuf += draw_param->net_jpg_quality.getText();
-    strbuf +=
-        "</span><br>\n<input type='range' min='1' max='100' "
-        "id='net_jpg_quality' onchange='f(\"net_jpg_quality=\" + this.value)' "
-        "oninput='document.getElementById(\"jq\").innerText=this.value;'></"
-        "li>\n";
-
-    strbuf +=
-        "<li> Pointer:<select id='misc_pointer' onchange='f(\"misc_pointer=\" "
-        "+ this.options[this.selectedIndex].value)'>";
-    for (int i = 0; i < draw_param->misc_pointer_max; ++i) {
+    strbuf += "</select></div>";
+    strbuf += "<div class='group'><label>Filter</label>";
+    strbuf += "<select id='sens_noisefilter' onchange='s(\"sens_noisefilter\",this.value)'>";
+    for (int i = 0; i < draw_param->sens_noisefilter_max; ++i) {
         strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->misc_pointer.getText(i)));
+                                     "<option value=\"%d\"%s>%s</option>", i,
+                                     i == draw_param->sens_noisefilter.get() ? " selected" : "",
+                                     draw_param->sens_noisefilter.getText(i)));
     }
-    strbuf += "</select></li>\n";
+    strbuf += "</select></div>";
+    strbuf += "<div class='group'><label>Area</label>";
+    strbuf += "<select id='sens_monitorarea' onchange='s(\"sens_monitorarea\",this.value)'>";
+    for (int i = 0; i < draw_param->sens_monitorarea_max; ++i) {
+        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
+                                     "<option value=\"%d\"%s>%s</option>", i,
+                                     i == draw_param->sens_monitorarea.get() ? " selected" : "",
+                                     draw_param->sens_monitorarea.getText(i)));
+    }
+    strbuf += "</select></div>";
+    strbuf += "<div class='group'><label>Emissivity: ";
+    strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf), "%d%%", draw_param->sens_emissivity.get()));
+    strbuf += "</label>";
+    strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
+                                 "<input type='range' min='20' max='100' id='sens_emissivity' value='%d' onchange='s(\"sens_emissivity\",this.value)'>",
+                                 draw_param->sens_emissivity.get()));
+    strbuf += "</div></div>";
 
-    strbuf +=
-        "<li> Color:<select id='misc_color' onchange='f(\"misc_color=\" + "
-        "this.options[this.selectedIndex].value)'>";
+    // Range
+    strbuf += "<div class='card'><h3>RANGE</h3>";
+    strbuf += "<div class='group'><label>Auto</label>";
+    strbuf += "<select id='range_autoswitch' onchange='s(\"range_autoswitch\",this.value)'>";
+    for (int i = 0; i < draw_param->range_autoswitch_max; ++i) {
+        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
+                                     "<option value=\"%d\"%s>%s</option>", i,
+                                     i == draw_param->range_autoswitch.get() ? " selected" : "",
+                                     draw_param->range_autoswitch.getText(i)));
+    }
+    strbuf += "</select></div>";
+    strbuf += "<div class='group'><label>";
+    strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf), "High: %.1fC",
+                                 convertRawToCelsius(draw_param->range_temp_upper)));
+    strbuf += "</label>";
+    strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
+                                 "<input type='range' min='-50' max='350' step='0.5' id='range_temp_upper' value='%.1f' onchange='s(\"range_temp_upper\",this.value)'>",
+                                 convertRawToCelsius(draw_param->range_temp_upper)));
+    strbuf += "</div>";
+    strbuf += "<div class='group'><label>";
+    strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf), "Low: %.1fC",
+                                 convertRawToCelsius(draw_param->range_temp_lower)));
+    strbuf += "</label>";
+    strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
+                                 "<input type='range' min='-50' max='350' step='0.5' id='range_temp_lower' value='%.1f' onchange='s(\"range_temp_lower\",this.value)'>",
+                                 convertRawToCelsius(draw_param->range_temp_lower)));
+    strbuf += "</div></div>";
+
+    // Display
+    strbuf += "<div class='card'><h3>DISPLAY</h3>";
+    strbuf += "<div class='group'><label>Color</label>";
+    strbuf += "<select id='misc_color' onchange='s(\"misc_color\",this.value)'>";
     for (int i = 0; i < color_map_table_len; ++i) {
         strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
+                                     "<option value=\"%d\"%s>%s</option>", i,
+                                     i == draw_param->misc_color.get() ? " selected" : "",
                                      draw_param->misc_color.getText(i)));
     }
-    strbuf += "</select></li>\n";
-
-    strbuf +=
-        "<li>Layout:<select id='misc_layout' onchange='f(\"misc_layout=\" + "
-        "this.options[this.selectedIndex].value)'>";
-    for (int i = 0; i < 6; ++i) {
-        strbuf.append(
-            cbuf, snprintf(cbuf, sizeof(cbuf),
-                           "<option value=\"%d\">layout %d</option>\n", i, i));
+    strbuf += "</select></div>";
+    strbuf += "<div class='group'><label>Pointer</label>";
+    strbuf += "<select id='misc_pointer' onchange='s(\"misc_pointer\",this.value)'>";
+    for (int i = 0; i < draw_param->misc_pointer_max; ++i) {
+        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
+                                     "<option value=\"%d\"%s>%s</option>", i,
+                                     i == draw_param->misc_pointer.get() ? " selected" : "",
+                                     draw_param->misc_pointer.getText(i)));
     }
-    strbuf += "</select></li>\n</ul>\n";
-    strbuf += HTML_footer;
+    strbuf += "</select></div>";
+    strbuf += "<div class='group'><label>Brightness</label>";
+    strbuf += "<select id='misc_brightness' onchange='s(\"misc_brightness\",this.value)'>";
+    for (int i = 0; i < draw_param->misc_brightness_max; ++i) {
+        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
+                                     "<option value=\"%d\"%s>%s</option>", i,
+                                     i == draw_param->misc_brightness.get() ? " selected" : "",
+                                     draw_param->misc_brightness.getText(i)));
+    }
+    strbuf += "</select></div></div>";
 
-    // client->print(HTTP_200_html);
+    // System
+    strbuf += "<div class='card'><h3>SYSTEM</h3>";
+    strbuf += "<div class='group'><label>CPU Speed</label>";
+    strbuf += "<select id='misc_cpuspeed' onchange='s(\"misc_cpuspeed\",this.value)'>";
+    for (int i = 0; i < draw_param->misc_cpuspeed_max; ++i) {
+        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
+                                     "<option value=\"%d\"%s>%s</option>", i,
+                                     i == draw_param->misc_cpuspeed.get() ? " selected" : "",
+                                     draw_param->misc_cpuspeed.getText(i)));
+    }
+    strbuf += "</select></div>";
+    strbuf += "<div class='group'><label>Volume</label>";
+    strbuf += "<select id='misc_volume' onchange='s(\"misc_volume\",this.value)'>";
+    for (int i = 0; i < draw_param->misc_volume_max; ++i) {
+        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
+                                     "<option value=\"%d\"%s>%s</option>", i,
+                                     i == draw_param->misc_volume.get() ? " selected" : "",
+                                     draw_param->misc_volume.getText(i)));
+    }
+    strbuf += "</select></div>";
+    strbuf += "<div class='group'><label>Stream Quality</label>";
+    strbuf += "<select id='net_jpg_quality' onchange='s(\"net_jpg_quality\",this.value)'>";
+    for (int i = 1; i <= 100; i += 10) {
+        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
+                                     "<option value=\"%d\"%s>%d%%</option>", i,
+                                     i == draw_param->net_jpg_quality.get() ? " selected" : "",
+                                     i));
+    }
+    strbuf += "</select></div></div>";
+
+    strbuf += "</div><div class='info'>Settings auto-save | <a href='/stream' style='color:#3DA7C7;text-decoration:none'>View Stream</a></div>";
+    strbuf += "<script>function s(k,v){fetch('/param?'+k+'='+v)}</script></body></html>";
+
     client->print(
-        "HTTP/1.1 200 OK\nContent-Type: text/html; "
-        "charset=UTF-8\nX-Content-Type-Options: nosniff\nConnection: "
-        "keep-alive\nCache-Control: no-cache\n");
+        "HTTP/1.1 200 OK\nContent-Type: text/html\nConnection: keep-alive\n");
     client->printf("Content-Length: %d\n\n", strbuf.size());
     client->write(strbuf.c_str(), strbuf.size());
-    client->print("\n");
     return true;
 }
 
