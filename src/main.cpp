@@ -8,6 +8,7 @@
 #include <esp_wifi.h>
 #include <driver/gpio.h>
 
+#include <mutex>
 #include <vector>
 
 #include <Preferences.h>
@@ -803,33 +804,94 @@ struct ui_base_t {
     uint8_t _prev_modify_count;
 };
 
+// The QR code UI is drawn by drawTask, but show/hide are requested from other
+// tasks (wifiTask on a phone joining/leaving the setup AP, loopTask from the
+// menu). Rebuilding _qr_canvas from another task freed the sprite buffer and
+// palette while drawTask was inside pushRotateZoom() on it, which crashed with
+// LoadProhibited in copy_palette_affine. show()/hide() therefore only record a
+// request; drawTask applies it in applyPending() so that only the display task
+// touches the sprite and the rects.
 class qrcode_ui_t : public ui_base_t {
    public:
-    std::string _qr_string = "teststring";
-    M5Canvas _qr_canvas;
     void draw(draw_param_t* param, M5Canvas* canvas, int32_t canvas_y,
               int32_t h) override {
         canvas->fillScreen(TFT_WHITE);
+        if (_qr_canvas.getBuffer() == nullptr || _qr_canvas.height() <= 0) {
+            return;
+        }
         // Leave the required four-module quiet zone on each side.
         float zoom = (float)_client_rect.h / (_qr_canvas.height() + 8);
         _qr_canvas.pushRotateZoom(
             canvas, _client_rect.x + (_client_rect.w >> 1),
             _client_rect.y + (_client_rect.h >> 1) - canvas_y, 0, zoom, zoom);
     }
+
+    // Default placement of a visible QR code. Independent of the QR content,
+    // so callers in other tasks can lay out neighbouring UI without waiting
+    // for drawTask to build the code.
+    static rect_t shownRect(void) {
+        int w = display.height();
+        return {(display.width() - w) >> 1, 0, w, w};
+    }
+    static rect_t hiddenRect(void) {
+        return {display.width() >> 1, display.height() >> 1, 0, 0};
+    }
+
+    // Thread-safe: may be called from any task.
     void show(const char* data) {
+        show(data, shownRect());
+    }
+    void show(const char* data, const rect_t& target) {
+        std::lock_guard<std::mutex> lock(_request_mutex);
+        _request_text    = data ? data : "";
+        _request_rect    = target;
+        _request_show    = true;
+        _request_pending = true;
+    }
+    void hide(void) {
+        std::lock_guard<std::mutex> lock(_request_mutex);
+        _request_rect    = hiddenRect();
+        _request_show    = false;
+        _request_pending = true;
+    }
+
+    // Must only be called from drawTask, before smoothMove()/draw().
+    void applyPending(void) {
+        std::string text;
+        rect_t target;
+        bool show;
+        {
+            std::lock_guard<std::mutex> lock(_request_mutex);
+            if (!_request_pending) return;
+            _request_pending = false;
+            text.swap(_request_text);
+            target = _request_rect;
+            show   = _request_show;
+        }
+        if (show && text != _qr_string) {
+            build(text);
+        }
+        setTargetRect(target);
+    }
+
+   private:
+    void build(const std::string& data) {
         _qr_canvas.setColorDepth(1);
         _qr_string = data;
+        // Heap buffer reused across versions: alloca() inside this loop grew
+        // the (4 KB) drawTask stack on every iteration.
+        std::vector<uint8_t> qrcodeData;
         for (uint8_t version = 1; version <= 40; ++version) {
             QRCode qrcode;
-            auto qrcodeData =
-                (uint8_t*)alloca(lgfx_qrcode_getBufferSize(version));
-            if (0 !=
-                lgfx_qrcode_initText(&qrcode, qrcodeData, version, 0, data))
+            qrcodeData.resize(lgfx_qrcode_getBufferSize(version));
+            if (0 != lgfx_qrcode_initText(&qrcode, qrcodeData.data(), version,
+                                          0, data.c_str()))
                 continue;
-            _qr_canvas.createSprite(qrcode.size, qrcode.size);
+            if (_qr_canvas.createSprite(qrcode.size, qrcode.size) == nullptr) {
+                _qr_string.clear();
+                break;
+            }
             _qr_canvas.fillScreen(1);
-            int_fast16_t thickness  = 1;
-            int_fast16_t lineLength = qrcode.size;
             _qr_canvas.setColor(0);
             uint32_t y = 0;
             do {
@@ -841,13 +903,16 @@ class qrcode_ui_t : public ui_base_t {
             } while (++y < qrcode.size);
             break;
         }
+    }
 
-        int w = display.height();
-        setTargetRect({(display.width() - w) >> 1, 0, w, w});
-    }
-    void hide(void) {
-        setTargetRect({display.width() >> 1, display.height() >> 1, 0, 0});
-    }
+    M5Canvas _qr_canvas;
+    std::string _qr_string;  // content of _qr_canvas (drawTask only)
+
+    std::mutex _request_mutex;
+    std::string _request_text;
+    rect_t _request_rect;
+    bool _request_show    = false;
+    bool _request_pending = false;
 };
 
 class overlay_ui_t : public ui_base_t {
@@ -1442,10 +1507,9 @@ class qr_ui2_t : public qr_ui_t {
     }
 
     bool enter(control_ui_t* parent) override {
-        qrcode_ui.show(value.text);
         overlay_ui.show(255, "Confirm", "Code", "",
                         draw_param.cloud_token.c_str());
-        auto r1   = qrcode_ui.getTargetRect();
+        auto r1   = qrcode_ui_t::shownRect();
         auto r2   = overlay_ui.getTargetRect();
         int32_t x = (display.width() - (r1.w + r2.w));
         if (x < 0) {
@@ -1455,7 +1519,7 @@ class qr_ui2_t : public qr_ui_t {
         r1.x = x >> 1;
         r2.x = r1.right();
 
-        qrcode_ui.setTargetRect(r1);
+        qrcode_ui.show(value.text, r1);
         overlay_ui.setTargetRect(r2);
 
         return control_ui_t::enter(parent);
@@ -2997,6 +3061,9 @@ void drawTask(void*) {
             prev_msec += (-limit_delay) >> 1;
         }
 
+        // Apply QR show/hide requested by other tasks (see qrcode_ui_t).
+        qrcode_ui.applyPending();
+
         for (auto ui : ui_list) {
             ui->smoothMove();
         }
@@ -3631,8 +3698,7 @@ void setup(void) {
 
     // check_oncloud();
     config_ui.setup();
-    qrcode_ui.setTargetRect(
-        {display.width() >> 1, display.height() >> 1, 0, 0});
+    qrcode_ui.hide();
 
     heap_caps_free(dummy_alloc);
 
