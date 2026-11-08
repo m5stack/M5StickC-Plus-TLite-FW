@@ -14,6 +14,7 @@
 #include "screenshot_streamer.hpp"
 
 #include "common_header.h"
+#include "wifi_scan.hpp"
 
 static constexpr const char HTTP_200_html[] =
     "HTTP/1.1 200 OK\r\nContent-Type: text/html; "
@@ -176,18 +177,6 @@ static std::string encode_html(const char* src) {
         }
     }
     return result;
-}
-
-static void release_wifi_scan(void) {
-    if (WiFi.scanComplete() == WIFI_SCAN_RUNNING) {
-        esp_wifi_scan_stop();
-        const uint32_t timeout_at = millis() + 100;
-        while (WiFi.scanComplete() == WIFI_SCAN_RUNNING &&
-               int32_t(millis() - timeout_at) < 0) {
-            delay(1);
-        }
-    }
-    WiFi.scanDelete();
 }
 
 static void redirect_header(WiFiClient* client, const char* path) {
@@ -663,7 +652,7 @@ static bool response_wifi(draw_param_t* draw_param, connection_t* conn) {
             // A STA connection cannot reliably start while an asynchronous AP
             // scan is active. Release its result buffer as well, since the list
             // is no longer needed after credentials have been submitted.
-            release_wifi_scan();
+            wifi_scan::cancel_and_clear();
             client->print(HTTP_200_html);
             client->print(
                 "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
@@ -762,16 +751,15 @@ static bool response_wifi(draw_param_t* draw_param, connection_t* conn) {
 
     client->print(HTTP_200_html);
     client->print(html_1);
-    if (conn->request_get == "scan=1") {
-        WiFi.scanDelete();
-        WiFi.scanNetworks(true);
+    // "Refresh networks" asks for a new scan; the first visit (or one after
+    // a scan that failed) starts one too. wifi_scan ignores the request
+    // while a scan is already running, so reloads cannot stack scans.
+    if (conn->request_get == "scan=1" || !wifi_scan::has_results()) {
+        wifi_scan::request();
     }
-    int count         = WiFi.scanComplete();
-    bool scan_running = count == WIFI_SCAN_RUNNING;
-    if (count == WIFI_SCAN_FAILED) {
-        WiFi.scanNetworks(true);
-        scan_running = true;
-    }
+    const bool scan_running = wifi_scan::running();
+    // The last complete list stays visible while a new scan runs.
+    const std::vector<std::string> ssids = wifi_scan::results();
     if (scan_running) {
         client->print(
             "<script>setTimeout(function(){location.replace('/wifi')},"
@@ -792,40 +780,20 @@ static bool response_wifi(draw_param_t* draw_param, connection_t* conn) {
     client->print(html_3);
     if (scan_running) {
         client->print("<p>Scanning...</p>");
-    } else if (count == 0) {
+    } else if (ssids.empty()) {
         client->print("<p>No networks found.</p>");
-    } else {
-        for (int i = 0; i < count; ++i) {
-            const String ssid = WiFi.SSID(i);
-            if (ssid.isEmpty()) continue;
-            bool duplicate = false;
-            for (int j = 0; j < i; ++j) {
-                if (ssid == WiFi.SSID(j)) {
-                    duplicate = true;
-                    break;
-                }
-            }
-            if (duplicate) continue;
-            const std::string escaped = encode_html(ssid.c_str());
-            client->printf(
-                "<a href='javascript:void(0);' onclick='s(this)'>%s</a>",
-                escaped.c_str());
-        }
+    }
+    // wifi_scan already removed hidden and duplicate entries.
+    for (const auto& ssid : ssids) {
+        const std::string escaped = encode_html(ssid.c_str());
+        client->printf(
+            "<a href='javascript:void(0);' onclick='s(this)'>%s</a>",
+            escaped.c_str());
     }
     client->print(
         "<a href='javascript:void(0);' onclick='r()'>Refresh networks</a>");
     client->print("<datalist id='ssid-list'>");
-    for (int i = 0; i < count; ++i) {
-        const String ssid = WiFi.SSID(i);
-        if (ssid.isEmpty()) continue;
-        bool duplicate = false;
-        for (int j = 0; j < i; ++j) {
-            if (ssid == WiFi.SSID(j)) {
-                duplicate = true;
-                break;
-            }
-        }
-        if (duplicate) continue;
+    for (const auto& ssid : ssids) {
         const std::string escaped = encode_html(ssid.c_str());
         client->printf("<option value='%s'></option>", escaped.c_str());
     }

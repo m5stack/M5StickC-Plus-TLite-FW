@@ -21,6 +21,7 @@
 #include "common_header.h"
 #include "screenshot_streamer.hpp"
 #include "wifi_diag.hpp"
+#include "wifi_scan.hpp"
 #include "jpg/jpge.h"
 
 #include "resource/bmp_logo.h"
@@ -2976,15 +2977,7 @@ void drawTask(void*) {
 }
 
 static void releaseWiFiScan(void) {
-    if (WiFi.scanComplete() == WIFI_SCAN_RUNNING) {
-        esp_wifi_scan_stop();
-        const uint32_t timeout_at = millis() + 100;
-        while (WiFi.scanComplete() == WIFI_SCAN_RUNNING &&
-               int32_t(millis() - timeout_at) < 0) {
-            delay(1);
-        }
-    }
-    WiFi.scanDelete();
+    wifi_scan::cancel_and_clear();
 }
 
 // volatile bool requestWiFi = false;
@@ -3081,7 +3074,7 @@ static void wifiTask(void*) {
                             }
                         }
                     }
-                    WiFi.scanNetworks(true);
+                    wifi_scan::request();
                     dhcps_dns_setserver(&(draw_param.dnsip));
                     static const uint16_t DNS_PORT = 53;
                     dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
@@ -3271,6 +3264,7 @@ void setup(void) {
         wifi_config_t current_conf;
         WiFi.setHostname(draw_param.net_hostname.c_str());
         WiFi.setAutoReconnect(false);
+        wifi_scan::begin();
         if (WiFi.begin()) {
             if (esp_wifi_get_config((wifi_interface_t)ESP_IF_WIFI_STA,
                                     &current_conf) == ESP_OK) {
