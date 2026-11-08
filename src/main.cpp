@@ -3165,6 +3165,29 @@ static void wifiTask(void*) {
                                       draw_param.net_apmode_subnet);
                     WiFi.softAP(draw_param.net_apmode_ssid,
                                 draw_param.net_apmode_pass, 1, false, 4);
+                    // Always push the AP config to the driver so it derives
+                    // the WPA2 PMK from the current SSID/passphrase.
+                    //
+                    // WiFi.softAP() skips esp_wifi_set_config() when the
+                    // requested config equals the one the driver restored
+                    // from NVS. Devices upgraded from older firmware (e.g.
+                    // 0.0.8, older ESP-IDF) have the same SSID/password in
+                    // NVS but only the legacy "ap.pmk" entry, not the newer
+                    // "ap.pmk_info"; the driver then serves the AP with an
+                    // unusable PMK and every client fails the 4-way
+                    // handshake ("wrong password").
+                    {
+                        wifi_config_t ap_conf;
+                        if (esp_wifi_get_config(WIFI_IF_AP, &ap_conf) ==
+                            ESP_OK) {
+                            esp_err_t err =
+                                esp_wifi_set_config(WIFI_IF_AP, &ap_conf);
+                            if (err != ESP_OK) {
+                                ESP_LOGE("wifi", "AP set_config failed: %d",
+                                         err);
+                            }
+                        }
+                    }
                     WiFi.scanNetworks(true);
                     dhcps_dns_setserver(&(draw_param.dnsip));
                     static const uint16_t DNS_PORT = 53;
