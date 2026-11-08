@@ -7,6 +7,8 @@
 #include <ESPmDNS.h>
 #include <esp_heap_caps.h>
 #include <esp_wifi.h>
+#include <math.h>
+#include <stdlib.h>
 #include <string>
 
 #include "screenshot_streamer.hpp"
@@ -78,10 +80,21 @@ struct connection_t {
 
     void clear_request(void) {
         is_post = false;
-        line_buf.clear();
-        request_path.clear();
-        request_post.clear();
-        request_get.clear();
+        // clear() keeps the allocated capacity, so each of the long-lived
+        // connection slots would otherwise hold on to the largest request it
+        // ever saw (up to the line limit). Release buffers that grew beyond
+        // a typical request to avoid tying up and fragmenting the heap.
+        release_if_large(line_buf);
+        release_if_large(request_path);
+        release_if_large(request_post);
+        release_if_large(request_get);
+    }
+    static void release_if_large(std::string& s) {
+        if (s.capacity() > 128) {
+            std::string().swap(s);
+        } else {
+            s.clear();
+        }
     }
     void stop(void) {
         client.stop();
@@ -91,27 +104,50 @@ struct connection_t {
     }
 };
 
-static size_t decode_uri(char* dest, const char* src, size_t bufsiz) {
-    int status     = 0;
-    size_t current = 0;
-    const char* p  = src;
-    if (bufsiz == 0) return 0;
-    bufsiz--;
+// Parses a Celsius value from a request parameter into the raw sensor scale.
+// Rejects empty/non-numeric/NaN/inf input and clamps to the range the raw
+// representation can hold, so the float->int conversion is always defined
+// (atof("nan") / "1e30" previously caused undefined behaviour).
+static bool parse_celsius(const std::string& s, int32_t& raw) {
+    char* end = nullptr;
+    float v   = strtof(s.c_str(), &end);
+    if (end == s.c_str() || !isfinite(v)) return false;
+    if (v < -64.0f) v = -64.0f;
+    if (v > 448.0f) v = 448.0f;
+    raw = convertCelsiusToRaw(v);
+    return true;
+}
 
-    while (*p != 0 && current < bufsiz) {
-        if (p[0] == '%' && p[1] != 0 && p[2] != 0) {
-            sscanf(&p[1], "%2X", &dest[current]);
-            p += 3;
-        } else if (p[0] == '+') {
-            dest[current] = ' ';
-            p += 1;
-        } else {
-            dest[current] = *p++;
+static int hex_value(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+// Decodes application/x-www-form-urlencoded text ("%xx" escapes, '+' as
+// space). The former version decoded "%xx" with sscanf("%2X") into a char,
+// which stores a 4-byte unsigned int and overran the caller's stack buffer.
+// Invalid escapes are kept literally; decoded NUL bytes are dropped because
+// they would silently truncate the value when passed on as a C string.
+static std::string decode_uri(const std::string& src) {
+    std::string out;
+    out.reserve(src.size());
+    for (size_t i = 0; i < src.size(); ++i) {
+        char c = src[i];
+        if (c == '%' && i + 2 < src.size()) {
+            int hi = hex_value(src[i + 1]);
+            int lo = hex_value(src[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                char d = (char)((hi << 4) | lo);
+                if (d != 0) out += d;
+                i += 2;
+                continue;
+            }
         }
-        ++current;
+        out += (c == '+') ? ' ' : c;
     }
-    dest[current] = 0;
-    return current;
+    return out;
 }
 
 static std::string encode_html(const char* src) {
@@ -210,7 +246,6 @@ static bool response_main(draw_param_t* draw_param, connection_t* conn) {
 
     std::string strbuf;
     strbuf.reserve(8192);
-    char cbuf[64];
 
     strbuf = html_1;
     strbuf +=
@@ -219,16 +254,14 @@ static bool response_main(draw_param_t* draw_param, connection_t* conn) {
         " <li> Alarm Mode: <select id='alarm_mode' onchange='f(\"alarm_mode=\" "
         "+ this.options[this.selectedIndex].value)'>";
     for (int i = 0; i < draw_param->alarm_mode_max; ++i) {
-        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->alarm_mode.getText(i)));
+        appendf(strbuf, "<option value=\"%d\">%s</option>\n", i,
+                draw_param->alarm_mode.getText(i));
     }
     strbuf += "</select></li>\n";
 
     strbuf += " <li> Temperature: <span id='at'>";
-    strbuf.append(cbuf,
-                  snprintf(cbuf, sizeof(cbuf), "%3.1f",
-                           convertRawToCelsius(draw_param->alarm_temperature)));
+    appendf(strbuf, "%3.1f",
+            convertRawToCelsius(draw_param->alarm_temperature));
     strbuf +=
         "</span><br>\n<input width='400em' type='range' min='-50' max='350' "
         "step='0.5' id='alarm_temperature' onchange='f(\"alarm_temperature=\" "
@@ -239,9 +272,8 @@ static bool response_main(draw_param_t* draw_param, connection_t* conn) {
         "onchange='f(\"alarm_reference=\" + "
         "this.options[this.selectedIndex].value)'>";
     for (int i = 0; i < draw_param->alarm_reference_max; ++i) {
-        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->alarm_reference.getText(i)));
+        appendf(strbuf, "<option value=\"%d\">%s</option>\n", i,
+                draw_param->alarm_reference.getText(i));
     }
     strbuf += "</select></li>\n</ul>\n";
     strbuf +=
@@ -251,9 +283,8 @@ static bool response_main(draw_param_t* draw_param, connection_t* conn) {
         "onchange='f(\"sens_refreshrate=\" + "
         "this.options[this.selectedIndex].value)'>";
     for (int i = 0; i < draw_param->sens_refreshrate_max; ++i) {
-        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->sens_refreshrate.getText(i)));
+        appendf(strbuf, "<option value=\"%d\">%s</option>\n", i,
+                draw_param->sens_refreshrate.getText(i));
     }
     strbuf += "</select></li>\n";
 
@@ -262,9 +293,8 @@ static bool response_main(draw_param_t* draw_param, connection_t* conn) {
         "onchange='f(\"sens_noisefilter=\" + "
         "this.options[this.selectedIndex].value)'>";
     for (int i = 0; i < draw_param->sens_noisefilter_max; ++i) {
-        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->sens_noisefilter.getText(i)));
+        appendf(strbuf, "<option value=\"%d\">%s</option>\n", i,
+                draw_param->sens_noisefilter.getText(i));
     }
     strbuf += "</select></li>\n";
 
@@ -273,15 +303,14 @@ static bool response_main(draw_param_t* draw_param, connection_t* conn) {
         "onchange='f(\"sens_monitorarea=\" + "
         "this.options[this.selectedIndex].value)'>";
     for (int i = 0; i < draw_param->sens_monitorarea_max; ++i) {
-        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->sens_monitorarea.getText(i)));
+        appendf(strbuf, "<option value=\"%d\">%s</option>\n", i,
+                draw_param->sens_monitorarea.getText(i));
     }
     strbuf += "</select></li>\n";
 
     strbuf += " <li> Emissivity: <span id='em'>";
-    strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf), "%d",
-                                 draw_param->sens_emissivity.get()));
+    appendf(strbuf, "%d",
+            draw_param->sens_emissivity.get());
     // strbuf += draw_param->sens_emissivity.getText();
     strbuf +=
         "</span><br>\n<input type='range' min='20' max='100' "
@@ -296,24 +325,21 @@ static bool response_main(draw_param_t* draw_param, connection_t* conn) {
         "onchange='f(\"range_autoswitch=\" + "
         "this.options[this.selectedIndex].value)'>";
     for (int i = 0; i < draw_param->range_autoswitch_max; ++i) {
-        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->range_autoswitch.getText(i)));
+        appendf(strbuf, "<option value=\"%d\">%s</option>\n", i,
+                draw_param->range_autoswitch.getText(i));
     }
     strbuf += "</select></li>\n";
     strbuf += " <li> Upper Temperature: <span id='rh'>";
-    strbuf.append(cbuf,
-                  snprintf(cbuf, sizeof(cbuf), "%3.1f",
-                           convertRawToCelsius(draw_param->range_temp_upper)));
+    appendf(strbuf, "%3.1f",
+            convertRawToCelsius(draw_param->range_temp_upper));
     strbuf +=
         "</span><br>\n<input width='400em' type='range' min='-50' max='350' "
         "step='0.5' id='range_temp_upper' onchange='f(\"range_temp_upper=\" "
         "+ this.value)' "
         "oninput='document.getElementById(\"rh\").innerText=this.value'></li>";
     strbuf += " <li> Lower Temperature: <span id='rl'>";
-    strbuf.append(cbuf,
-                  snprintf(cbuf, sizeof(cbuf), "%3.1f",
-                           convertRawToCelsius(draw_param->range_temp_lower)));
+    appendf(strbuf, "%3.1f",
+            convertRawToCelsius(draw_param->range_temp_lower));
     strbuf +=
         "</span><br>\n<input width='400em' type='range' min='-50' max='350' "
         "step='0.5' id='range_temp_lower' onchange='f(\"range_temp_lower=\" "
@@ -328,9 +354,8 @@ static bool response_main(draw_param_t* draw_param, connection_t* conn) {
         "onchange='f(\"misc_cpuspeed=\" + "
         "this.options[this.selectedIndex].value)'>";
     for (int i = 0; i < draw_param->misc_cpuspeed_max; ++i) {
-        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->misc_cpuspeed.getText(i)));
+        appendf(strbuf, "<option value=\"%d\">%s</option>\n", i,
+                draw_param->misc_cpuspeed.getText(i));
     }
     strbuf += "</select></li>\n";
 
@@ -339,9 +364,8 @@ static bool response_main(draw_param_t* draw_param, connection_t* conn) {
         "onchange='f(\"misc_volume=\" + "
         "this.options[this.selectedIndex].value)'>";
     for (int i = 0; i < draw_param->misc_volume_max; ++i) {
-        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->misc_volume.getText(i)));
+        appendf(strbuf, "<option value=\"%d\">%s</option>\n", i,
+                draw_param->misc_volume.getText(i));
     }
     strbuf += "</select></li>\n";
 
@@ -350,9 +374,8 @@ static bool response_main(draw_param_t* draw_param, connection_t* conn) {
         "onchange='f(\"misc_brightness=\" + "
         "this.options[this.selectedIndex].value)'>";
     for (int i = 0; i < draw_param->misc_brightness_max; ++i) {
-        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->misc_brightness.getText(i)));
+        appendf(strbuf, "<option value=\"%d\">%s</option>\n", i,
+                draw_param->misc_brightness.getText(i));
     }
     strbuf += "</select></li>\n";
 
@@ -361,9 +384,8 @@ static bool response_main(draw_param_t* draw_param, connection_t* conn) {
         "onchange='f(\"misc_language=\" + "
         "this.options[this.selectedIndex].value)'>";
     for (int i = 0; i < draw_param->misc_language_max; ++i) {
-        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->misc_language_text[i]));
+        appendf(strbuf, "<option value=\"%d\">%s</option>\n", i,
+                draw_param->misc_language_text[i]);
     }
     strbuf += "</select></li>\n";
 
@@ -379,9 +401,8 @@ static bool response_main(draw_param_t* draw_param, connection_t* conn) {
         "<li> Pointer:<select id='misc_pointer' onchange='f(\"misc_pointer=\" "
         "+ this.options[this.selectedIndex].value)'>";
     for (int i = 0; i < draw_param->misc_pointer_max; ++i) {
-        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->misc_pointer.getText(i)));
+        appendf(strbuf, "<option value=\"%d\">%s</option>\n", i,
+                draw_param->misc_pointer.getText(i));
     }
     strbuf += "</select></li>\n";
 
@@ -389,9 +410,8 @@ static bool response_main(draw_param_t* draw_param, connection_t* conn) {
         "<li> Color:<select id='misc_color' onchange='f(\"misc_color=\" + "
         "this.options[this.selectedIndex].value)'>";
     for (int i = 0; i < color_map_table_len; ++i) {
-        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->misc_color.getText(i)));
+        appendf(strbuf, "<option value=\"%d\">%s</option>\n", i,
+                draw_param->misc_color.getText(i));
     }
     strbuf += "</select></li>\n";
 
@@ -399,9 +419,7 @@ static bool response_main(draw_param_t* draw_param, connection_t* conn) {
         "<li>Layout:<select id='misc_layout' onchange='f(\"misc_layout=\" + "
         "this.options[this.selectedIndex].value)'>";
     for (int i = 0; i < 6; ++i) {
-        strbuf.append(
-            cbuf, snprintf(cbuf, sizeof(cbuf),
-                           "<option value=\"%d\">layout %d</option>\n", i, i));
+        appendf(strbuf, "<option value=\"%d\">layout %d</option>\n", i, i);
     }
     strbuf += "</select></li>\n</ul>\n";
     strbuf += HTML_footer;
@@ -424,15 +442,13 @@ static bool response_param(draw_param_t* draw_param, connection_t* conn) {
         ++pos;
         auto val = conn->request_get.substr(pos);
 
+        int32_t raw;
         if (key == "alarm_temperature") {
-            draw_param->alarm_temperature =
-                convertCelsiusToRaw(atof(val.c_str()));
+            if (parse_celsius(val, raw)) draw_param->alarm_temperature = raw;
         } else if (key == "range_temp_upper") {
-            draw_param->range_temp_upper =
-                convertCelsiusToRaw(atof(val.c_str()));
+            if (parse_celsius(val, raw)) draw_param->range_temp_upper = raw;
         } else if (key == "range_temp_lower") {
-            draw_param->range_temp_lower =
-                convertCelsiusToRaw(atof(val.c_str()));
+            if (parse_celsius(val, raw)) draw_param->range_temp_lower = raw;
         } else {
             int v = atoi(val.c_str());
             if (key == "alarm_mode") {
@@ -475,64 +491,42 @@ static bool response_param(draw_param_t* draw_param, connection_t* conn) {
     }
 
     std::string strbuf;
-    char cbuf[64];
-    strbuf.append(
-        cbuf,
-        snprintf(cbuf, sizeof(cbuf), "{\n \"alarm_temperature\": \"%3.1f\"",
-                 convertRawToCelsius(draw_param->alarm_temperature)));
-    strbuf.append(cbuf,
-                  snprintf(cbuf, sizeof(cbuf), ",\n \"alarm_mode\": \"%d\"",
-                           draw_param->alarm_mode.get()));
-    strbuf.append(
-        cbuf, snprintf(cbuf, sizeof(cbuf), ",\n \"alarm_reference\": \"%d\"",
-                       draw_param->alarm_reference.get()));
-    strbuf.append(
-        cbuf, snprintf(cbuf, sizeof(cbuf), ",\n \"sens_refreshrate\": \"%d\"",
-                       draw_param->sens_refreshrate.get()));
-    strbuf.append(
-        cbuf, snprintf(cbuf, sizeof(cbuf), ",\n \"sens_noisefilter\": \"%d\"",
-                       draw_param->sens_noisefilter.get()));
-    strbuf.append(
-        cbuf, snprintf(cbuf, sizeof(cbuf), ",\n \"sens_monitorarea\": \"%d\"",
-                       draw_param->sens_monitorarea.get()));
-    strbuf.append(
-        cbuf, snprintf(cbuf, sizeof(cbuf), ",\n \"sens_emissivity\": \"%d\"",
-                       draw_param->sens_emissivity.get()));
-    strbuf.append(
-        cbuf, snprintf(cbuf, sizeof(cbuf), ",\n \"range_autoswitch\": \"%d\"",
-                       draw_param->range_autoswitch.get()));
-    strbuf.append(
-        cbuf,
-        snprintf(cbuf, sizeof(cbuf), ",\n \"range_temp_upper\": \"%3.1f\"",
-                 convertRawToCelsius(draw_param->range_temp_upper)));
-    strbuf.append(
-        cbuf,
-        snprintf(cbuf, sizeof(cbuf), ",\n \"range_temp_lower\": \"%3.1f\"",
-                 convertRawToCelsius(draw_param->range_temp_lower)));
-    strbuf.append(
-        cbuf, snprintf(cbuf, sizeof(cbuf), ",\n \"net_jpg_quality\": \"%d\"",
-                       draw_param->net_jpg_quality.get()));
-    strbuf.append(cbuf,
-                  snprintf(cbuf, sizeof(cbuf), ",\n \"misc_cpuspeed\": \"%d\"",
-                           draw_param->misc_cpuspeed.get()));
-    strbuf.append(cbuf,
-                  snprintf(cbuf, sizeof(cbuf), ",\n \"misc_volume\": \"%d\"",
-                           draw_param->misc_volume.get()));
-    strbuf.append(
-        cbuf, snprintf(cbuf, sizeof(cbuf), ",\n \"misc_brightness\": \"%d\"",
-                       draw_param->misc_brightness.get()));
-    strbuf.append(cbuf,
-                  snprintf(cbuf, sizeof(cbuf), ",\n \"misc_language\": \"%d\"",
-                           draw_param->misc_language.get()));
-    strbuf.append(cbuf,
-                  snprintf(cbuf, sizeof(cbuf), ",\n \"misc_pointer\": \"%d\"",
-                           draw_param->misc_pointer.get()));
-    strbuf.append(cbuf,
-                  snprintf(cbuf, sizeof(cbuf), ",\n \"misc_layout\": \"%d\"",
-                           draw_param->misc_layout.get()));
-    strbuf.append(cbuf,
-                  snprintf(cbuf, sizeof(cbuf), ",\n \"misc_color\": \"%d\"",
-                           draw_param->misc_color.get()));
+    appendf(strbuf, "{\n \"alarm_temperature\": \"%3.1f\"",
+            convertRawToCelsius(draw_param->alarm_temperature));
+    appendf(strbuf, ",\n \"alarm_mode\": \"%d\"",
+            draw_param->alarm_mode.get());
+    appendf(strbuf, ",\n \"alarm_reference\": \"%d\"",
+            draw_param->alarm_reference.get());
+    appendf(strbuf, ",\n \"sens_refreshrate\": \"%d\"",
+            draw_param->sens_refreshrate.get());
+    appendf(strbuf, ",\n \"sens_noisefilter\": \"%d\"",
+            draw_param->sens_noisefilter.get());
+    appendf(strbuf, ",\n \"sens_monitorarea\": \"%d\"",
+            draw_param->sens_monitorarea.get());
+    appendf(strbuf, ",\n \"sens_emissivity\": \"%d\"",
+            draw_param->sens_emissivity.get());
+    appendf(strbuf, ",\n \"range_autoswitch\": \"%d\"",
+            draw_param->range_autoswitch.get());
+    appendf(strbuf, ",\n \"range_temp_upper\": \"%3.1f\"",
+            convertRawToCelsius(draw_param->range_temp_upper));
+    appendf(strbuf, ",\n \"range_temp_lower\": \"%3.1f\"",
+            convertRawToCelsius(draw_param->range_temp_lower));
+    appendf(strbuf, ",\n \"net_jpg_quality\": \"%d\"",
+            draw_param->net_jpg_quality.get());
+    appendf(strbuf, ",\n \"misc_cpuspeed\": \"%d\"",
+            draw_param->misc_cpuspeed.get());
+    appendf(strbuf, ",\n \"misc_volume\": \"%d\"",
+            draw_param->misc_volume.get());
+    appendf(strbuf, ",\n \"misc_brightness\": \"%d\"",
+            draw_param->misc_brightness.get());
+    appendf(strbuf, ",\n \"misc_language\": \"%d\"",
+            draw_param->misc_language.get());
+    appendf(strbuf, ",\n \"misc_pointer\": \"%d\"",
+            draw_param->misc_pointer.get());
+    appendf(strbuf, ",\n \"misc_layout\": \"%d\"",
+            draw_param->misc_layout.get());
+    appendf(strbuf, ",\n \"misc_color\": \"%d\"",
+            draw_param->misc_color.get());
     strbuf += "\n}\n\n";
 
     client->print(
@@ -589,35 +583,22 @@ static bool response_text(draw_param_t* draw_param, connection_t* conn) {
         "initial-scale=1.0\">\n"
         "<meta http-equiv=\"refresh\" content=\"1; URL=\">\n"
         "<title>T-Lite Text Info</title>\n</head>\n<body><table>\n";
-    char cbuf[128];
 
     std::string strbuf = html_1;
-    strbuf.append(cbuf,
-                  snprintf(cbuf, sizeof(cbuf),
-                           "<tr><th>uptime </th><td>%u:%02u:%02u</td></tr>\n",
-                           unsigned(uptime_s / 3600),
-                           unsigned((uptime_s / 60) % 60),
-                           unsigned(uptime_s % 60)));
-    strbuf.append(
-        cbuf,
-        snprintf(
-            cbuf, sizeof(cbuf), "<tr><th>center </th><td>%3.1f</td></tr>\n",
-            convertRawToCelsius(draw_param->frame->temp[framedata_t::center])));
-    strbuf.append(cbuf,
-                  snprintf(cbuf, sizeof(cbuf),
-                           "<tr><th>highest</th><td>%3.1f</td></tr>\n",
-                           convertRawToCelsius(
-                               draw_param->frame->temp[framedata_t::highest])));
-    strbuf.append(cbuf,
-                  snprintf(cbuf, sizeof(cbuf),
-                           "<tr><th>average</th><td>%3.1f</td></tr>\n",
-                           convertRawToCelsius(
-                               draw_param->frame->temp[framedata_t::average])));
-    strbuf.append(
-        cbuf,
-        snprintf(
-            cbuf, sizeof(cbuf), "<tr><th>lowest </th><td>%3.1f</td></tr>\n",
-            convertRawToCelsius(draw_param->frame->temp[framedata_t::lowest])));
+    appendf(strbuf, "<tr><th>uptime </th><td>%u:%02u:%02u</td></tr>\n",
+            unsigned(uptime_s / 3600),
+            unsigned((uptime_s / 60) % 60),
+            unsigned(uptime_s % 60));
+    appendf(strbuf, "<tr><th>center </th><td>%3.1f</td></tr>\n",
+            convertRawToCelsius(draw_param->frame->temp[framedata_t::center]));
+    appendf(strbuf, "<tr><th>highest</th><td>%3.1f</td></tr>\n",
+            convertRawToCelsius(
+            draw_param->frame->temp[framedata_t::highest]));
+    appendf(strbuf, "<tr><th>average</th><td>%3.1f</td></tr>\n",
+            convertRawToCelsius(
+            draw_param->frame->temp[framedata_t::average]));
+    appendf(strbuf, "<tr><th>lowest </th><td>%3.1f</td></tr>\n",
+            convertRawToCelsius(draw_param->frame->temp[framedata_t::lowest]));
     strbuf += "</table></body></html>\n\n";
 
     client->print(
@@ -665,14 +646,19 @@ static bool response_wifi(draw_param_t* draw_param, connection_t* conn) {
             auto val = conn->request_post.substr(pos1, pos2++ - pos1++);
             // ESP_LOGE("DEBUG","key : %s  val : %s", key.c_str(), val.c_str());
 
-            char buf[64];
-            decode_uri(buf, val.c_str(), sizeof(buf));
             if (key == "s") {
-                ssid = buf;
+                ssid = decode_uri(val);
             } else if (key == "p") {
-                password = buf;
+                password = decode_uri(val);
             }
         } while (!end);
+        // 802.11 limits: SSID up to 32 bytes; WPA2 passphrase 8..63
+        // characters or a 64-digit hex PSK. Never save a truncated value.
+        static constexpr size_t ssid_max = 32;
+        static constexpr size_t pass_max = 64;
+        if (ssid.length() > ssid_max || password.length() > pass_max) {
+            ssid.clear();
+        }
         if (ssid.length()) {
             // A STA connection cannot reliably start while an asynchronous AP
             // scan is active. Release its result buffer as well, since the list
@@ -1145,6 +1131,18 @@ void webserverTask(void* arg) {
                         continue;
                     }
                     if (c != '\n') {
+                        // Bound each request/header line. Without a limit a
+                        // client sending bytes without a newline grew this
+                        // string until the heap was exhausted (abort).
+                        static constexpr size_t line_max = 1024;
+                        if (conn.line_buf.size() >= line_max) {
+                            client->print(
+                                "HTTP/1.1 431 Request Header Fields Too "
+                                "Large\r\nConnection: close\r\n"
+                                "Content-Length: 0\r\n\r\n");
+                            conn.stop();
+                            break;
+                        }
                         conn.line_buf.append(1, c);
                     } else {
                         // ESP_EARLY_LOGD("DEBUG", "line_buf : %s",
