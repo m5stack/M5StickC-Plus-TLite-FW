@@ -5,6 +5,7 @@
 #pragma once
 
 #include <driver/i2c.h>
+#include <esp_intr_alloc.h>
 #include <soc/i2c_struct.h>
 #include <cstdint>
 
@@ -25,6 +26,10 @@ class I2C_Master {
     bool writeWords(const uint16_t *data, size_t length);
     bool readWords(uint16_t *readdata, size_t length, bool last_nack, int freq);
 
+    /// Recovers from a failed transfer: disarms the read interrupt, clocks
+    /// the bus free, resets the controller and returns to idle.
+    void abort(void);
+
     bool transactionWrite(int addr, const uint8_t *writedata, uint8_t writelen,
                           uint32_t freq);
     bool transactionRead(int addr, uint8_t *readdata, uint8_t readlen,
@@ -41,15 +46,16 @@ class I2C_Master {
         isr_nojob,
         isr_readword,
     };
-    isr_mode_t _isr_mode            = isr_nojob;
-    uint8_t *_isr_recv_buf          = nullptr;
-    size_t _isr_recv_done_len       = 0;
-    size_t _isr_recv_remain_len     = 0;
-    bool _isr_result                = 0;
-    xSemaphoreHandle _isr_semaphore = nullptr;
+    volatile isr_mode_t _isr_mode          = isr_nojob;
+    uint8_t *volatile _isr_recv_buf        = nullptr;
+    volatile size_t _isr_recv_done_len     = 0;
+    volatile size_t _isr_recv_remain_len   = 0;
+    volatile bool _isr_result              = false;
+    xSemaphoreHandle _isr_semaphore        = nullptr;
+    intr_handle_t _intr_handle             = nullptr;
 
-    gpio_num_t _pin_sda;
-    gpio_num_t _pin_scl;
+    gpio_num_t _pin_sda = GPIO_NUM_NC;
+    gpio_num_t _pin_scl = GPIO_NUM_NC;
     uint32_t _freq;
     uint8_t _i2c_port;
     bool _wait_ack;

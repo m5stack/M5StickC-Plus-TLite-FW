@@ -2833,9 +2833,29 @@ void drawTask(void*) {
             ui->setClientRect(rect);
         }
     }
-    do {
-        delay(1);
-    } while (idx_recv < 2);
+    // Wait for the first sensor frames. If none arrive (HAT missing or not
+    // answering) say so instead of showing only the boot logo; mlxTask keeps
+    // retrying and the normal screen replaces this once frames arrive.
+    {
+        const uint32_t wait_start = millis();
+        bool notice_shown         = false;
+        do {
+            delay(1);
+            if (!notice_shown && millis() - wait_start > 3000) {
+                notice_shown = true;
+                display.startWrite();
+                display.fillRect(0, disp_height - 20, disp_width, 20,
+                                 TFT_BLACK);
+                display.setTextColor(TFT_WHITE, TFT_BLACK);
+                display.setTextDatum(datum_t::middle_center);
+                display.setFont(&fonts::Font0);
+                display.drawString("Thermal sensor not found", disp_width >> 1,
+                                   disp_height - 10);
+                display.setTextDatum(datum_t::top_left);
+                display.endWrite();
+            }
+        } while (idx_recv < 2);
+    }
 
     // uint8_t prev_color_table_idx = 0;
     uint32_t prev_msec = millis();

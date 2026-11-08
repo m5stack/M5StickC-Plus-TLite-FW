@@ -109,22 +109,38 @@ static void IRAM_ATTR mlxTask(void* main_handle) {
             break;
     }
 
-    // running...
+    auto serviceBattery = []() {
+        if (_battery_request) {
+            _battery_request = false;
+            _battery_state   = M5.Power.isCharging();
+            _battery_level   = readBatteryLevel();
+        }
+    };
+
+    // error_count >= 128 means "(re)initialise": it starts there so that the
+    // first initialisation also gets the bus recovery, and every failure to
+    // initialise returns there (the former init loop retried without ever
+    // clearing the bus, and setRate() could spin forever).
+    static constexpr uint8_t reinit_count = 128;
     size_t discard_count = 2;
-    uint8_t error_count  = 255;
+    uint8_t error_count  = reinit_count;
     for (;;) {
-        if (error_count >= 128) {
+        if (error_count >= reinit_count) {
             _i2c_in.release();
-            if (error_count == 128) {  // 強制的にSTOPコンディションを送信する
+            {  // 強制的にSTOPコンディションを送信する
+                // Clock out a slave that is holding SDA low, then send
+                // STOPs. Open-drain: never drive SDA high against a slave
+                // that is pulling it low.
                 ESP_EARLY_LOGD("mlxTask", "I2C force stop");
                 gpio_config_t io_conf;
                 io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
-                io_conf.pull_up_en   = GPIO_PULLUP_DISABLE;
+                io_conf.pull_up_en   = GPIO_PULLUP_ENABLE;
                 io_conf.intr_type    = GPIO_INTR_DISABLE;
-                io_conf.mode         = GPIO_MODE_OUTPUT;
-                io_conf.pin_bit_mask = (uint64_t)1 << PIN_IN_SDA;
-                gpio_config(&io_conf);
-                io_conf.pin_bit_mask = (uint64_t)1 << PIN_IN_SCL;
+                io_conf.mode         = GPIO_MODE_INPUT_OUTPUT_OD;
+                io_conf.pin_bit_mask =
+                    ((uint64_t)1 << PIN_IN_SDA) | ((uint64_t)1 << PIN_IN_SCL);
+                gpio_hi(PIN_IN_SDA);
+                gpio_hi(PIN_IN_SCL);
                 gpio_config(&io_conf);
                 for (int i = 0; i < 20; ++i) {
                     vTaskDelay(1);
@@ -138,23 +154,24 @@ static void IRAM_ATTR mlxTask(void* main_handle) {
                 }
             }
             // initialize sensor.
-            _i2c_in.init(PORT_I2C, PIN_IN_SDA, PIN_IN_SCL);
-            int retry = 16;
-
-            while (!_mlx.init(&_i2c_in)) {
-                ESP_EARLY_LOGD("mlxTask", "I2C int");
+            if (!_i2c_in.init(PORT_I2C, PIN_IN_SDA, PIN_IN_SCL) ||
+                !_mlx.init(&_i2c_in) || !_mlx.setRate(_refresh_rate)) {
+                ESP_EARLY_LOGD("mlxTask", "sensor init failed, retrying");
+                serviceBattery();
                 vTaskDelay(100);
+                continue;  // error_count stays at reinit_count
             }
-
-            _mlx.setRate(_refresh_rate);
 
             error_count   = 0;
             discard_count = 2;
         }
         m5::MLX90640_Class::refresh_rate_t rate = _mlx.getRate();
         if (rate != _refresh_rate) {
+            if (!_mlx.setRate(_refresh_rate)) {
+                error_count = reinit_count;
+                continue;
+            }
             rate = _refresh_rate;
-            _mlx.setRate(rate);
             // Discard twice because invalid data is obtained immediately after
             // refresh rate change.
             discard_count = 2;
@@ -179,11 +196,7 @@ static void IRAM_ATTR mlxTask(void* main_handle) {
                                                           2,  1,  1, 1};
             vTaskDelay(delay_tbl[rate]);
         }
-        if (_battery_request) {
-            _battery_request = false;
-            _battery_state   = M5.Power.isCharging();
-            _battery_level   = readBatteryLevel();
-        }
+        serviceBattery();
     }
     vTaskDelete(nullptr);
 }
@@ -209,9 +222,6 @@ void setup(void) {
         memset(_mlx_framedatas[i], 0x2C, m5::MLX90640_Class::FRAME_DATA_BYTES);
     }
 
-    xTaskCreatePinnedToCore(mlxTask, "mlxTask", 8192,
-                            xTaskGetCurrentTaskHandle(), 20, nullptr,
-                            APP_CPU_NUM);
     _refresh_rate = m5::MLX90640_Class::rate_32Hz;
     _noise_filter = 8;
     _emissivity   = 98;  // <- default : 98.0 %
@@ -221,6 +231,12 @@ void setup(void) {
             sizeof(m5::MLX90640_Class::temp_data_t), MALLOC_CAP_DMA);
         memset(_mlx_tempdatas[i], 0, sizeof(m5::MLX90640_Class::temp_data_t));
     }
+
+    // Start the (priority 20) sensor task last: it preempts this task at
+    // once and must see the rate and buffers already set up.
+    xTaskCreatePinnedToCore(mlxTask, "mlxTask", 8192,
+                            xTaskGetCurrentTaskHandle(), 20, nullptr,
+                            APP_CPU_NUM);
 }
 
 bool IRAM_ATTR loop(void) {

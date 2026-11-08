@@ -213,7 +213,7 @@ struct MLX90640_params_t {
         this->cpOffset[1] = offsetSP[1];
     }
 
-    void setAlphaParameters(const uint16_t *eeData) {
+    bool setAlphaParameters(const uint16_t *eeData) {
         int accRow[24];
         int accColumn[32];
         int p = 0;
@@ -285,8 +285,14 @@ struct MLX90640_params_t {
             }
         }
 
+        // A valid sensitivity is a positive, finite value; with a corrupt
+        // EEPROM image it can be 0 or negative, and the doubling loop below
+        // would never end. Bound it as well.
+        if (!(temp > 0) || !std::isfinite(temp)) {
+            return false;
+        }
         alphaScale = 0;
-        while (temp < 32768) {
+        while (temp < 32768 && alphaScale < 63) {
             temp       = temp * 2;
             alphaScale = alphaScale + 1;
         }
@@ -296,6 +302,7 @@ struct MLX90640_params_t {
             this->alpha[i] = (temp + 0.5);
         }
         this->alphaScale = alphaScale;
+        return true;
     }
 
     void setOffsetParameters(const uint16_t *eeData) {
@@ -420,8 +427,10 @@ struct MLX90640_params_t {
             }
         }
 
+        // temp == 0 (all coefficients zero) would loop forever; any scale
+        // gives the same zero result, so the cap only bounds the loop.
         ktaScale1 = 0;
-        while (temp < 64) {
+        while (temp < 64 && ktaScale1 < 31) {
             temp      = temp * 2;
             ktaScale1 = ktaScale1 + 1;
         }
@@ -494,7 +503,7 @@ struct MLX90640_params_t {
         }
 
         kvScale = 0;
-        while (temp < 64) {
+        while (temp < 64 && kvScale < 31) {  // bounded, see kta above
             temp    = temp * 2;
             kvScale = kvScale + 1;
         }
@@ -611,7 +620,28 @@ struct MLX90640_params_t {
         return warn;
     }
 
-    void setParam(const uint16_t *eeData) {
+    // Melexis MLX90640_CheckEEPROMValid: bit 6 of EEPROM word 0x240A must be
+    // 0. Also reject a uniform image (all 0x0000 or all 0xFFFF), which is
+    // what a floating or shorted bus reads back.
+    static bool checkEEPROMValid(const uint16_t *eeData) {
+        if (eeData[10] & 0x0040) {
+            return false;
+        }
+        for (int i = 1; i < 832; ++i) {
+            if (eeData[i] != eeData[0]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Returns false if the EEPROM image is unusable; the caller then retries
+    // the read instead of measuring with bogus calibration.
+    bool setParam(const uint16_t *eeData) {
+        if (!checkEEPROMValid(eeData)) {
+            ESP_LOGW("MLX90640", "EEPROM image invalid");
+            return false;
+        }
         setVDDParameters(eeData);
         setPTATParameters(eeData);
         setGainParameters(eeData);
@@ -620,12 +650,28 @@ struct MLX90640_params_t {
         setKsTaParameters(eeData);
         setKsToParameters(eeData);
         setCPParameters(eeData);
-        setAlphaParameters(eeData);
+        if (!setAlphaParameters(eeData)) {
+            ESP_LOGW("MLX90640", "EEPROM sensitivity data invalid");
+            return false;
+        }
         setOffsetParameters(eeData);
         setKtaPixelParameters(eeData);
         setKvPixelParameters(eeData);
         setCILCParameters(eeData);
-        setDeviatingPixels(eeData);
+        const int warn = setDeviatingPixels(eeData);
+        if (warn == -3 || warn == -4 || warn == -5) {
+            // More broken/outlier pixels than the datasheet allows (4):
+            // treat as a bad read rather than a real sensor.
+            ESP_LOGW("MLX90640", "EEPROM pixel flags invalid (%d)", warn);
+            return false;
+        }
+        if (warn != 0) {
+            // Adjacent defective pixels (-6): usable, interpolation is just
+            // less accurate there. Not fatal, or such a unit would never
+            // start.
+            ESP_LOGW("MLX90640", "adjacent defective pixels (%d)", warn);
+        }
+        return true;
     }
 
     float MLX90640_GetVdd(const uint16_t *frameData) const {
@@ -1033,7 +1079,7 @@ struct MLX90640_params_t {
         // 破損ピクセル箇所の補間処理
         // (隣接ピクセル（最大４点）の平均を用いて更新する)
         for (auto bp : {brokenPixels, outlierPixels}) {
-            for (int idx = 0; bp[idx] < 768 && idx < 5; ++idx) {
+            for (int idx = 0; idx < 5 && bp[idx] < 768; ++idx) {
                 auto pixelNumber = bp[idx];
                 int i            = pixelNumber >> 1;
                 int ilPattern    = (i >> 4) & 1;
@@ -1067,15 +1113,25 @@ struct MLX90640_params_t {
 
 static MLX90640_params_t MLX90640_params;
 
+// On failure the bus is recovered with abort(): the former code skipped
+// stop() after a failed step and left the bus held and the read ISR armed.
 bool MLX90640_Class::readReg(uint16_t reg, uint16_t *data, size_t len) {
-    return _i2c->start(_i2c_addr, false, 400000) && _i2c->writeWords(&reg, 1) &&
-           _i2c->restart(_i2c_addr, true, 400000) &&
-           _i2c->readWords(data, len, true, _i2c_freq) && _i2c->stop();
+    if (_i2c->start(_i2c_addr, false, 400000) && _i2c->writeWords(&reg, 1) &&
+        _i2c->restart(_i2c_addr, true, 400000) &&
+        _i2c->readWords(data, len, true, _i2c_freq) && _i2c->stop()) {
+        return true;
+    }
+    _i2c->abort();
+    return false;
 }
 
 bool MLX90640_Class::writeReg(uint16_t reg, const uint16_t *data, size_t len) {
-    return _i2c->start(_i2c_addr, false, 400000) && _i2c->writeWords(&reg, 1) &&
-           _i2c->writeWords(data, len) && _i2c->stop();
+    if (_i2c->start(_i2c_addr, false, 400000) && _i2c->writeWords(&reg, 1) &&
+        _i2c->writeWords(data, len) && _i2c->stop()) {
+        return true;
+    }
+    _i2c->abort();
+    return false;
 }
 
 bool MLX90640_Class::writeReg(uint16_t reg, uint16_t value) {
@@ -1086,33 +1142,46 @@ bool MLX90640_Class::init(I2C_Master *i2c) {
     _i2c = i2c;
 
     uint16_t data[1024];
-    if (readReg(0x2400, data, 832)) {
-        MLX90640_params.setParam(data);
-        return true;
+    if (!readReg(0x2400, data, 832)) {
+        return false;
     }
-    return false;
+    // Rejects an unreadable/corrupt EEPROM image instead of deriving
+    // calibration from it (which could hang in the normalisation loops).
+    return MLX90640_params.setParam(data);
 }
 
-void MLX90640_Class::setRate(refresh_rate_t rate) {
-    int r         = rate & 7;
-    _refresh_rate = (refresh_rate_t)r;
+bool MLX90640_Class::setRate(refresh_rate_t rate) {
+    const int r = rate & 7;
     // If the refresh rate is 32 Hz or higher, the communication speed is
     // increased because I2C 400 kHz cannot meet the refresh cycle.
     uint32_t freq = 9375u << r;
     if (freq < 100000) {
         freq = 100000;
     }
-    _i2c_freq = freq;
 
+    // Bounded: the former endless retry hung mlxTask when the sensor was
+    // missing. The caller falls back to re-initialising the bus.
     uint16_t tmp;
-
+    int retry = 8;
     while (!readReg(0x800D, &tmp, 1)) {
+        if (--retry == 0) {
+            return false;
+        }
         vTaskDelay(1);
     }
 
-    uint16_t value = (tmp & 0xFC7F) | (_refresh_rate << 7);
-    writeReg(0x800D, &value, 1);
-    writeReg(0x8000, 0x0030);
+    // Bits 7-9: refresh rate. Bit 12: reading pattern; force chess mode
+    // (1), which the frame/pixel code assumes, even if the sensor's EEPROM
+    // default selects interleaved mode.
+    uint16_t value = (tmp & 0xEC7F) | 0x1000 | (r << 7);
+    ESP_LOGD("MLX90640", "control 0x800D: 0x%04x -> 0x%04x", tmp, value);
+    if (!writeReg(0x800D, &value, 1) || !writeReg(0x8000, 0x0030)) {
+        return false;
+    }
+    // Commit only after the sensor accepted the new rate.
+    _i2c_freq     = freq;
+    _refresh_rate = (refresh_rate_t)r;
+    return true;
 }
 
 bool MLX90640_Class::readFrameData(uint16_t *data) {

@@ -56,7 +56,8 @@ class MLX90640_Class {
 #pragma pack(pop)
 
     bool init(I2C_Master* i2c);
-    void setRate(refresh_rate_t rate);
+    /// false if the sensor did not answer; the rate is then unchanged.
+    bool setRate(refresh_rate_t rate);
     inline refresh_rate_t getRate(void) const {
         return _refresh_rate;
     }
