@@ -20,6 +20,7 @@
 
 #include "common_header.h"
 #include "screenshot_streamer.hpp"
+#include "wifi_diag.hpp"
 #include "jpg/jpge.h"
 
 #include "resource/bmp_logo.h"
@@ -3650,6 +3651,9 @@ void setup(void) {
         //     WiFi.begin("YOUR_DEFAULT_SSID", "YOUR_DEFAULT_PASSWORD");
         // }
     }
+
+    // No-op unless built with TLITE_WIFI_DIAG (debug builds by default).
+    wifi_diag_begin();
 
     // webサーバタスクは loopと同じ APP_CPUプライオリティ1
     // を指定、優劣をつけない
