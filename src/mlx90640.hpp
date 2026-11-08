@@ -71,6 +71,14 @@ class MLX90640_Class {
     /// framedata require size 834 * 2 Bytes
     bool readFrameData(uint16_t* framedata);
 
+    /// Frames accepted / discarded as torn (overwritten during the read) /
+    /// discarded as invalid, since boot.
+    void getFrameStats(uint32_t& ok, uint32_t& torn, uint32_t& invalid) const {
+        ok      = _stat_ok;
+        torn    = _stat_torn;
+        invalid = _stat_invalid;
+    }
+
     /// calc by raw frame data
     /// tempdata require 32*24*2 Byte, and framedata require size 834 * 2 Bytes
     void calcTempData(const uint16_t* framedata, temp_data_t* tempdata,
@@ -85,5 +93,8 @@ class MLX90640_Class {
     refresh_rate_t _refresh_rate = (refresh_rate_t)-1;
     uint32_t _i2c_freq           = 800000;
     uint8_t _i2c_addr            = 0x33;
+    uint32_t _stat_ok            = 0;
+    uint32_t _stat_torn          = 0;
+    uint32_t _stat_invalid       = 0;
 };
 }  // namespace m5

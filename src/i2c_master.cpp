@@ -178,6 +178,9 @@ void IRAM_ATTR I2C_Master::i2c_stop(void) {
         gpio_set_level(_pin_scl, 0);
     }
     gpio_set_level(_pin_sda, 0);  // setup for STOP
+    // Called on every forced stop (reference count only grows). Enabling it
+    // just once was tried and broke sensor detection on the device, so the
+    // original behaviour is kept.
     periph_module_enable(mod);
     gpio_set_level(_pin_scl, 1);
     periph_module_reset(mod);
@@ -200,7 +203,10 @@ bool IRAM_ATTR I2C_Master::i2c_wait(bool flg_stop) {
         return res;
     }
 
+    // Zero when no ACK is pending, so the stop path below takes the safe
+    // forced-stop branch instead of testing an uninitialised value.
     typeof(i2c_dev->int_raw) int_raw;
+    int_raw.val = 0;
     static constexpr uint32_t intmask = I2C_ACK_ERR_INT_RAW_M |
                                         I2C_END_DETECT_INT_RAW_M |
                                         I2C_ARBITRATION_LOST_INT_RAW_M;
@@ -277,9 +283,11 @@ bool IRAM_ATTR I2C_Master::_readword_inner(i2c_dev_t *dev, uint8_t *data,
                                            size_t length, bool last_nack) {
     size_t len = ((length - 1) & 127) + 1;
     length -= len;
+    // Also runs inside the IRAM interrupt handler, possibly while the flash
+    // cache is disabled, so no logging here (ESP_LOGW lives in flash); the
+    // task-side caller logs instead.
     auto res = i2c_wait(false);
     if (!res) {
-        ESP_LOGW("I2C_Master", "readWords error : ack wait");
         return false;
     }
 
@@ -798,6 +806,7 @@ bool I2C_Master::readWords(uint16_t *readdata, size_t length, bool last_nack,
     _isr_recv_done_len = 0;
     if (!_readword_inner(get_i2c_dev(_i2c_port), (uint8_t *)readdata, length,
                          last_nack)) {
+        ESP_LOGW("I2C_Master", "readWords error : ack wait");
         return false;
     }
     // 想定の8倍の時間(+10 msec)で応答が得られなければ通信失敗と見なして帰る

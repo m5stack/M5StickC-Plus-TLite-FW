@@ -117,6 +117,19 @@ The application image is generated at `.pio/build/release/firmware.bin`. It is a
 application-partition image for address `0x10000`; use the PlatformIO upload command
 above when writing a complete device.
 
+### Power-cycle after flashing
+
+The thermal sensor's I2C data line (SDA) is on GPIO0, which the ESP32 also reads at
+reset to choose between normal boot and download mode. If the chip is reset while a
+sensor transfer is in progress (for example by the uploader's automatic reset), the
+sensor can still be holding SDA low, so the ESP32 starts in download mode and the
+screen stays dark. This is a property of the hardware wiring and cannot be avoided by
+the firmware: such a reset bypasses it. Switch the device off and on after flashing.
+The firmware clears the I2C bus whenever it (re)initialises the sensor.
+
+If uploads fail at the default `upload_speed` (1.5 Mbaud), set a lower speed such as
+`upload_speed = 115200` in `platformio.ini`.
+
 ## Links
 
 - [T-Lite documentation and datasheet](https://docs.m5stack.com/en/app/T-Lite)

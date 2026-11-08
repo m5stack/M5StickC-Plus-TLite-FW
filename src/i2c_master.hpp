@@ -58,7 +58,7 @@ class I2C_Master {
     gpio_num_t _pin_scl = GPIO_NUM_NC;
     uint32_t _freq;
     uint8_t _i2c_port;
-    bool _wait_ack;
+    bool _wait_ack = false;
 
     enum state_t { state_disconnect, state_write, state_read, state_error };
     state_t _state;

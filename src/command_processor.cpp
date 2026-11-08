@@ -197,6 +197,26 @@ static void IRAM_ATTR mlxTask(void* main_handle) {
             vTaskDelay(delay_tbl[rate]);
         }
         serviceBattery();
+#if CORE_DEBUG_LEVEL >= 4
+        {  // frames accepted / discarded per 10 s (debug builds only)
+            static uint32_t next_ms = 10000;
+            static uint32_t last_ok = 0, last_torn = 0, last_invalid = 0;
+            const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+            if (int32_t(now - next_ms) >= 0) {
+                next_ms = now + 10000;
+                uint32_t ok, torn, invalid;
+                _mlx.getFrameStats(ok, torn, invalid);
+                ESP_EARLY_LOGD("mlxTask",
+                               "rate=%d last 10 s: ok=%u torn=%u invalid=%u",
+                               (int)rate, (unsigned)(ok - last_ok),
+                               (unsigned)(torn - last_torn),
+                               (unsigned)(invalid - last_invalid));
+                last_ok      = ok;
+                last_torn    = torn;
+                last_invalid = invalid;
+            }
+        }
+#endif
     }
     vTaskDelete(nullptr);
 }
@@ -216,9 +236,20 @@ void setEmissivity(uint8_t percent) {
 }
 
 void setup(void) {
+    // These buffers are needed for the device to work at all; fail loudly
+    // at boot rather than with a null pointer later in another task.
+    auto alloc = [](size_t size) {
+        void* p = heap_caps_malloc(size, MALLOC_CAP_DMA);
+        if (p == nullptr) {
+            ESP_LOGE("command_processor", "out of memory (%u bytes)",
+                     (unsigned)size);
+            abort();
+        }
+        return p;
+    };
     for (int i = 0; i < MLX_FRAMEDATA_ARRAY_SIZE; ++i) {
-        _mlx_framedatas[i] = (uint16_t*)heap_caps_malloc(
-            m5::MLX90640_Class::FRAME_DATA_BYTES, MALLOC_CAP_DMA);
+        _mlx_framedatas[i] =
+            (uint16_t*)alloc(m5::MLX90640_Class::FRAME_DATA_BYTES);
         memset(_mlx_framedatas[i], 0x2C, m5::MLX90640_Class::FRAME_DATA_BYTES);
     }
 
@@ -227,8 +258,8 @@ void setup(void) {
     _emissivity   = 98;  // <- default : 98.0 %
 
     for (int i = 0; i < MLX_TEMP_ARRAY_SIZE; ++i) {
-        _mlx_tempdatas[i] = (m5::MLX90640_Class::temp_data_t*)heap_caps_malloc(
-            sizeof(m5::MLX90640_Class::temp_data_t), MALLOC_CAP_DMA);
+        _mlx_tempdatas[i] = (m5::MLX90640_Class::temp_data_t*)alloc(
+            sizeof(m5::MLX90640_Class::temp_data_t));
         memset(_mlx_tempdatas[i], 0, sizeof(m5::MLX90640_Class::temp_data_t));
     }
 
@@ -254,10 +285,12 @@ bool IRAM_ATTR loop(void) {
             }
         }
 #endif
-        // prev_idx_framedata = _idx_framedata;
-        prev_idx_framedata = prev_idx_framedata < MLX_FRAMEDATA_ARRAY_SIZE - 1
-                                 ? prev_idx_framedata + 1
-                                 : 0;
+        // Process the newest frame. The former code stepped through the ring
+        // one frame at a time; after a stall (e.g. an NVS write) it worked
+        // through stale frames, and a frame 3 behind could be overwritten
+        // by mlxTask while being read. Each frame carries its own subpage,
+        // so skipping frames is safe.
+        prev_idx_framedata = _idx_framedata;
         // auto prev_temp_data = _mlx_tempdatas[_idx_tempdata];
         int idx =
             _idx_tempdata < MLX_TEMP_ARRAY_SIZE - 1 ? _idx_tempdata + 1 : 0;
@@ -267,8 +300,19 @@ bool IRAM_ATTR loop(void) {
         _mlx.calcTempData(_mlx_framedatas[prev_idx_framedata], _temp_data,
                           emissivity);
 
+        // The noise filter compares each pixel with the previous result of
+        // the same subpage (the other subpage holds different pixels). That
+        // is usually two results back, but not after a skipped frame.
         auto prev_temp_data = _mlx_tempdatas[(idx + MLX_TEMP_ARRAY_SIZE - 2) %
                                              MLX_TEMP_ARRAY_SIZE];
+        {
+            auto prev1 = _mlx_tempdatas[(idx + MLX_TEMP_ARRAY_SIZE - 1) %
+                                        MLX_TEMP_ARRAY_SIZE];
+            if (prev_temp_data->subpage != _temp_data->subpage &&
+                prev1->subpage == _temp_data->subpage) {
+                prev_temp_data = prev1;
+            }
+        }
 
         static constexpr int16_t noise_filter_level[] = {181, 256,  362,  512,
                                                          724, 1024, 1448, 2048};

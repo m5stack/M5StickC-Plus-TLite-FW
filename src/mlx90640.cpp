@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstring>
 #include <cmath>
+#include <mutex>
 
 // 不良ピクセルのデバッグのために疑似的に設定した不良ピクセルの番号;
 // #define DEBUG_BROKENPIXEL 100
@@ -1113,6 +1114,35 @@ struct MLX90640_params_t {
 
 static MLX90640_params_t MLX90640_params;
 
+// Serialises calibration updates against temperature calculation. After a
+// bus error mlxTask (priority 20) re-reads the EEPROM and rewrites
+// MLX90640_params, and it can preempt the main loop in the middle of
+// calcTempData(), which would then mix old and new calibration. A FreeRTOS
+// mutex (std::mutex) has priority inheritance, so the main loop finishes the
+// frame first.
+static std::mutex params_mutex;
+
+// Melexis MLX90640_ValidateFrameData / ValidateAuxData: 0x7FFF in these
+// words means the RAM was read while the sensor was writing it.
+static bool validateFrame(const uint16_t *frame) {
+    const uint16_t subpage = frame[833];
+    for (int i = 0, line = 0; i < 768; i += 32, ++line) {
+        if (frame[i] == 0x7FFF && (line & 1) == subpage) {
+            return false;
+        }
+    }
+    const uint16_t *aux = frame + 768;
+    if (aux[0] == 0x7FFF) return false;
+    static constexpr uint8_t ranges[][2] = {{8, 19},  {20, 23}, {24, 33},
+                                            {40, 51}, {52, 55}, {56, 64}};
+    for (auto &r : ranges) {
+        for (int i = r[0]; i < r[1]; ++i) {
+            if (aux[i] == 0x7FFF) return false;
+        }
+    }
+    return true;
+}
+
 // On failure the bus is recovered with abort(): the former code skipped
 // stop() after a failed step and left the bus held and the read ISR armed.
 bool MLX90640_Class::readReg(uint16_t reg, uint16_t *data, size_t len) {
@@ -1147,6 +1177,7 @@ bool MLX90640_Class::init(I2C_Master *i2c) {
     }
     // Rejects an unreadable/corrupt EEPROM image instead of deriving
     // calibration from it (which could hang in the normalisation loops).
+    std::lock_guard<std::mutex> lock(params_mutex);
     return MLX90640_params.setParam(data);
 }
 
@@ -1185,18 +1216,38 @@ bool MLX90640_Class::setRate(refresh_rate_t rate) {
 }
 
 bool MLX90640_Class::readFrameData(uint16_t *data) {
-    if (!readReg(0x8000, data, 1) || !((data[0] & 0x08))) return false;
-    data[833] = data[0] & 1;  // subPage
+    uint16_t status;
+    if (!readReg(0x8000, &status, 1) || !(status & 0x08)) return false;
 
-    if (readReg(0x0400, data, 832) && readReg(0x800D, &data[832], 1)) {
-        // データ破損対策：830番が異常値になっていないかチェックする;
-        return (data[830] < 0xFF) && writeReg(0x8000, 0x0030);
+    // Clear "new data ready" before reading (as Melexis GetFrameData does),
+    // so that a subpage the sensor writes while we read is detectable below.
+    // The former code cleared it after the read and could not tell.
+    if (!writeReg(0x8000, 0x0030)) return false;
+    if (!readReg(0x0400, data, 832) || !readReg(0x800D, &data[832], 1)) {
+        return false;
     }
-    return false;
+    data[833] = status & 1;  // subPage
+
+    uint16_t status_after;
+    if (!readReg(0x8000, &status_after, 1)) return false;
+    if (status_after & 0x08) {
+        // The next subpage was written into RAM during the read: the frame
+        // mixes two measurements. Skip it; the new one is read next.
+        ++_stat_torn;
+        return false;
+    }
+    // データ破損対策：830番が異常値になっていないかチェックする;
+    if (!(data[830] < 0xFF) || !validateFrame(data)) {
+        ++_stat_invalid;
+        return false;
+    }
+    ++_stat_ok;
+    return true;
 }
 
 void MLX90640_Class::calcTempData(const uint16_t *framedata,
                                   temp_data_t *tempdata, float emissivity) {
+    std::lock_guard<std::mutex> lock(params_mutex);
     float Ta = MLX90640_params.MLX90640_GetTa(framedata);
 
     // Reflected temperature based on the sensor ambient temperature
@@ -1214,15 +1265,19 @@ void MLX90640_Class::calcTempData(const uint16_t *framedata,
                                   uint8_t monitor_height) {
     float emissivity = 0.95;
 
-    float Ta = MLX90640_params.MLX90640_GetTa(framedata);
-
-    // Reflected temperature based on the sensor ambient temperature
-    float tr = Ta - TA_SHIFT;
-
     bool subpage      = framedata[833];
     tempdata->subpage = subpage;
-    MLX90640_params.MLX90640_CalculateTo(framedata, emissivity, tr, tempdata,
-                                         prev_tempdata, filter_level);
+    {
+        std::lock_guard<std::mutex> lock(params_mutex);
+        float Ta = MLX90640_params.MLX90640_GetTa(framedata);
+
+        // Reflected temperature based on the sensor ambient temperature
+        float tr = Ta - TA_SHIFT;
+
+        MLX90640_params.MLX90640_CalculateTo(framedata, emissivity, tr,
+                                             tempdata, prev_tempdata,
+                                             filter_level);
+    }
 
     uint16_t data[384];
     uint16_t min_temp = UINT16_MAX;
