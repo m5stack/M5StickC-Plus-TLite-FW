@@ -55,9 +55,29 @@ the IP address instead.
 The mDNS hostname changed from `T-Lite_xxxx.local` to `t-lite-xxxx.local`. Update
 saved bookmarks created with older firmware.
 
+## Network use
+
+T-Lite never contacts the internet. Its only network activity is on the local
+network:
+
+- DHCP, to obtain an IP address and register its `t-lite-xxxx` hostname
+- mDNS, to announce `t-lite-xxxx.local` on the local link
+- its own HTTP server (browser control, data, and the MJPEG stream)
+- in AP setup mode, a DNS responder that answers phones joined to T-Lite's own
+  access point with T-Lite's address
+
+There is no cloud upload and no NTP time sync, so the device has no wall-clock
+time; the text page shows uptime instead.
+
+**Running Mode** (Network menu) is either **Offline** (Wi-Fi off) or **LAN**.
+When upgrading from firmware with cloud support, a saved *LAN* or *LAN+Cloud*
+mode becomes **LAN** and *Cloud Online* becomes **Offline**, and the stored cloud
+settings and confirm code are erased from flash on first boot. The `/json`
+output no longer includes the `pwd`, `interval`, and `datetime` fields.
+
 ## Battery indicator
 
-The battery icon shares the upper-right status row with the Wi-Fi and cloud icons.
+The battery icon shares the upper-right status row with the Wi-Fi icon.
 
 | Appearance | Meaning |
 | --- | --- |

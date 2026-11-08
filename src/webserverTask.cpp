@@ -214,33 +214,6 @@ static bool response_main(draw_param_t* draw_param, connection_t* conn) {
 
     strbuf = html_1;
     strbuf +=
-        "<label for='tgl_cloud'>Cloud</label><input type='checkbox' "
-        "id='tgl_cloud'>\n<ul>\n"
-        "<li>Upload Interval:<select id='cloud_interval' "
-        "onchange='f(\"cloud_interval=\" + "
-        "this.options[this.selectedIndex].value)'>";
-    for (int i = 0; i < draw_param->cloud_interval_max; ++i) {
-        strbuf.append(cbuf, snprintf(cbuf, sizeof(cbuf),
-                                     "<option value=\"%d\">%s</option>\n", i,
-                                     draw_param->cloud_interval.getText(i)));
-    }
-    strbuf +=
-        "</select></li>\n"
-        "<li><form "
-        "onsubmit='f(\"cloud_token=\"+document.getElementById(\"cloud_token\")."
-        "value); return false;'>Confirm Code:<br>"
-        "<input type='text' name='cloud_token' id='cloud_token' "
-        "placeholder='User defined code'>\n"
-        "<button type='submit'>Save</button></form></li>";
-    strbuf +=
-        "<li> Cloud Online URL:<br>\n<a target='_blank' rel='noreferrer' "
-        "href=\"";
-    strbuf += draw_param->cloud_url;
-    strbuf += "\">";
-    strbuf += draw_param->cloud_url;
-    strbuf += "</a>\n</li></ul>\n";
-
-    strbuf +=
         "<label for='tgl_alarm'>Alarm</label><input type='checkbox' "
         "id='tgl_alarm'>\n<ul>\n"
         " <li> Alarm Mode: <select id='alarm_mode' onchange='f(\"alarm_mode=\" "
@@ -460,8 +433,6 @@ static bool response_param(draw_param_t* draw_param, connection_t* conn) {
         } else if (key == "range_temp_lower") {
             draw_param->range_temp_lower =
                 convertCelsiusToRaw(atof(val.c_str()));
-        } else if (key == "cloud_token") {
-            draw_param->cloud_token = val.c_str();
         } else {
             int v = atoi(val.c_str());
             if (key == "alarm_mode") {
@@ -498,11 +469,6 @@ static bool response_param(draw_param_t* draw_param, connection_t* conn) {
                 draw_param->in_config_mode = false;
             } else if (key == "misc_color") {
                 draw_param->misc_color.set(v);
-            }
-            // else if (key == "cloud_upload"      ) { draw_param->cloud_upload
-            // .set(v); }
-            else if (key == "cloud_interval") {
-                draw_param->cloud_interval.set(v);
             }
         }
         // draw_param->saveNvs();
@@ -567,12 +533,6 @@ static bool response_param(draw_param_t* draw_param, connection_t* conn) {
     strbuf.append(cbuf,
                   snprintf(cbuf, sizeof(cbuf), ",\n \"misc_color\": \"%d\"",
                            draw_param->misc_color.get()));
-    strbuf.append(cbuf,
-                  snprintf(cbuf, sizeof(cbuf), ",\n \"cloud_interval\": \"%d\"",
-                           draw_param->cloud_interval.get()));
-    strbuf.append(cbuf,
-                  snprintf(cbuf, sizeof(cbuf), ",\n \"cloud_token\": \"%s\"",
-                           draw_param->cloud_token.c_str()));
     strbuf += "\n}\n\n";
 
     client->print(
@@ -619,8 +579,9 @@ static bool response_json(draw_param_t* draw_param, connection_t* conn) {
 
 static bool response_text(draw_param_t* draw_param, connection_t* conn) {
     auto client = &conn->client;
-    auto t      = time(nullptr);
-    auto gmt    = gmtime(&t);
+    // The device has no time source (no NTP), so show uptime instead of a
+    // wall-clock date/time.
+    const uint32_t uptime_s = millis() / 1000;
 
     static constexpr const char html_1[] =
         "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">\n"
@@ -633,13 +594,10 @@ static bool response_text(draw_param_t* draw_param, connection_t* conn) {
     std::string strbuf = html_1;
     strbuf.append(cbuf,
                   snprintf(cbuf, sizeof(cbuf),
-                           "<tr><th>date </th><td>%s, %d %s %04d</td></tr>",
-                           wday_tbl[gmt->tm_wday], gmt->tm_mday,
-                           mon_tbl[gmt->tm_mon], gmt->tm_year + 1900));
-    strbuf.append(cbuf,
-                  snprintf(cbuf, sizeof(cbuf),
-                           "<tr><th>time </th><td>%02d:%02d:%02d GMT</td></tr>",
-                           gmt->tm_hour, gmt->tm_min, gmt->tm_sec));
+                           "<tr><th>uptime </th><td>%u:%02u:%02u</td></tr>\n",
+                           unsigned(uptime_s / 3600),
+                           unsigned((uptime_s / 60) % 60),
+                           unsigned(uptime_s % 60)));
     strbuf.append(
         cbuf,
         snprintf(
@@ -736,8 +694,7 @@ static bool response_wifi(draw_param_t* draw_param, connection_t* conn) {
             draw_param->net_tmp_pwd      = password;
             draw_param->net_running_mode = draw_param->net_running_mode_offline;
             delay(64);
-            draw_param->net_running_mode =
-                draw_param->net_running_mode_lan_cloud;
+            draw_param->net_running_mode = draw_param->net_running_mode_lan;
             draw_param->net_setup_mode = draw_param->net_setup_mode_off;
             /*
                         WiFi.begin(ssid.c_str(), password.c_str());
@@ -996,10 +953,7 @@ static bool response_top(draw_param_t* draw_param, connection_t* conn) {
 
     static constexpr const char html_2[] =
         "</head><body><div class='ct'><h1>T-Lite Top menu</h1>"
-        "<div class='main'><div class='ls'><h2>Cloud</h2>";
-
-    static constexpr const char html_3[] =
-        "</div><hr><div class='ls'><h2>LAN</h2>";
+        "<div class='main'><div class='ls'><h2>LAN</h2>";
 
     static constexpr const char html_4[] =
         "<a href=\"/main\">Browser control</a>\n"
@@ -1014,15 +968,6 @@ static bool response_top(draw_param_t* draw_param, connection_t* conn) {
     client->print(HTML_style);
     client->print(html_2);
 
-    client->printf(
-        "<a target='_blank' rel='noreferrer' href='%s'>Image "
-        "(ConfirmCode:%s)</a>",
-        draw_param->cloud_url.c_str(), draw_param->cloud_token.c_str());
-    // if (WiFi.getMode() & WIFI_AP) {
-    //     client->print(html_3);
-    // }
-    client->print(html_3);
-
     if (WiFi.getMode() & WIFI_AP) {
         client->print("<a href=\"/wifi\">WiFi setting</a>\n");
     }
@@ -1031,54 +976,6 @@ static bool response_top(draw_param_t* draw_param, connection_t* conn) {
 
     client->print(HTML_footer);
     return false;
-}
-
-static bool response_test(draw_param_t* draw_param, connection_t* conn) {
-    static constexpr const char head[] =
-        "HTTP/1.1 200 OK\n"
-        "Content-Type: text/html\n"
-        "Content-Length: 16\n"
-        "Connection: keep-alive\n"
-        "Cache-Control: no-store\n"
-        "\n";
-    auto client = &conn->client;
-
-    client->print(head);
-    client->print("0123456789abcdef\n\n\n");
-    client->flush();
-    return true;
-
-    /*/
-    static constexpr const char html[] = "HTTP/1.1 200 OK\nContent-Type:
-    text/html\nConnection:close\n\n"
-    "<!DOCTYPE HTML><html><head><meta charset=\"utf-8\">"
-    "<meta name=\"viewport\" content=\"width=device-width,
-    initial-scale=1\"><style>" "  html { font-family: Helvetica; display:
-    inline-block; margin: 0px auto;text-align: center;} " "  h1
-    {font-size:28px;} " " .btn_on { padding:12px 30px; text-decoration:none;
-    font-size:24px; background-color: " "  #668ad8; color: #FFF; border-bottom:
-    solid 4px #627295; border-radius: 2px;} " "      .btn_on:active {
-    -webkit-transform: translateY(0px); transform: translateY(0px); " "
-    border-bottom: none;} " "      .btn_off { background-color: #555555;
-    border-bottom: solid 4px #333333;} " "      .slider { width: 200px;} " "
-    </style><script
-    src=\"https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js\"></script></head>"
-    " <body><h1>M5TLite</h1> ";
-                                client->print(html);
-                                client->printf("<p>Brightness (<span
-    id=\"emissivityValue\"></span>)</p>"
-                                            "<input type=\"range\" min=\"5\"
-    max=\"100\" step=\"1\" class=\"slider\" id=\"emissivityInput\"
-    onchange=\"valueFunction(this.value)\" value=\"%d\" />",
-    draw_param->perf_emissivity); client->print("<script> var obj =
-    document.getElementById(\"emissivityInput\");" "var target =
-    document.getElementById(\"emissivityValue\");" "target.innerHTML =
-    obj.value;" "obj.oninput = function() { obj.value = this.value;
-    target.innerHTML = this.value; } \n" " function valueFunction(val) {
-    $.get(\"/?value=\" + val + '&'); { Connection: close}; }"
-        "</script></body></html>");
-    return false;
-    //*/
 }
 
 struct response_table_t {
@@ -1091,7 +988,6 @@ static constexpr const response_table_t response_table[] = {
     {"/json", response_json},   {"/text", response_text},
     {"/wifi", response_wifi},   {"/stream", response_stream},
     {"/param", response_param}, {"/health", response_health},
-    // { "/test"   , response_test },
 };
 
 void webserverTask(void* arg) {
