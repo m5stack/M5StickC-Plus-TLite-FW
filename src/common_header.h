@@ -1,8 +1,51 @@
 #include <stdint.h>
 #include <stddef.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string>
 #include <M5GFX.h>
 #include <M5Unified.h>
 #include <WiFi.h>
+
+// printf-style formatting into std::string.
+//
+// Replaces the former `dst.append(cbuf, snprintf(cbuf, sizeof(cbuf), ...))`
+// idiom: snprintf returns the length the output *would* have, so any output
+// longer than cbuf made append() read past the end of the stack buffer and
+// leak memory contents. These never over-read and never truncate: output that
+// does not fit the stack buffer is formatted directly into dst.
+static inline void vappendf(std::string& dst, const char* fmt, va_list ap) {
+    char buf[96];
+    va_list ap2;
+    va_copy(ap2, ap);
+    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+    if (n > 0) {
+        if ((size_t)n < sizeof(buf)) {
+            dst.append(buf, (size_t)n);
+        } else {
+            size_t old = dst.size();
+            dst.resize(old + (size_t)n + 1);
+            vsnprintf(&dst[old], (size_t)n + 1, fmt, ap2);
+            dst.resize(old + (size_t)n);
+        }
+    }
+    va_end(ap2);
+}
+__attribute__((format(printf, 2, 3))) static inline void appendf(
+    std::string& dst, const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vappendf(dst, fmt, ap);
+    va_end(ap);
+}
+__attribute__((format(printf, 2, 3))) static inline void assignf(
+    std::string& dst, const char* fmt, ...) {
+    dst.clear();
+    va_list ap;
+    va_start(ap, fmt);
+    vappendf(dst, fmt, ap);
+    va_end(ap);
+}
 
 static constexpr const uint8_t firmware_ver_major = 0;
 static constexpr const uint8_t firmware_ver_minor = 0;
@@ -593,9 +636,12 @@ class config_property_value_t : public config_property_base_t {
         return _value;
     }
     bool set(const int32_t src) override {
-        T v         = (T)((src < _minimum)       ? _minimum
-                          : (src < _maximum + 1) ? src
-                                                 : _maximum + 1);
+        // _maximum is inclusive (see add()); the former clamp to
+        // _maximum + 1 accepted one value past the range (e.g. JPEG quality
+        // 101, which jpge rejects, stopping the LAN stream).
+        T v         = (T)((src < _minimum)   ? _minimum
+                          : (src > _maximum) ? _maximum
+                                             : src);
         bool result = (_value != v);
         if (result) {
             config_save_countdown = 255;

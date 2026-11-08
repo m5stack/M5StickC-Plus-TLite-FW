@@ -1829,35 +1829,25 @@ class header_ui_t : public ui_base_t {
             if ((param->draw_count & 3) == 0) {
                 auto status = WiFi.status();
 
-                char cbuf[64];
 
                 if (WiFi.getMode() == WIFI_AP ||
                     WiFi.getMode() == WIFI_AP_STA) {
-                    _text.assign(cbuf,
-                                 snprintf(cbuf, sizeof(cbuf), "SSID:%s  /  ",
-                                          draw_param.net_apmode_ssid));
-                    _text.append(cbuf,
-                                 snprintf(cbuf, sizeof(cbuf), "PWD:%s  /  ",
-                                          draw_param.net_apmode_pass));
-                    _text.append(
-                        cbuf,
-                        snprintf(
-                            cbuf, sizeof(cbuf), "AP IP:%s  /  ",
-                            draw_param.net_apmode_ipaddr.toString().c_str()));
+                    assignf(_text, "SSID:%s  /  ",
+                            draw_param.net_apmode_ssid);
+                    appendf(_text, "PWD:%s  /  ",
+                            draw_param.net_apmode_pass);
+                    appendf(_text, "AP IP:%s  /  ",
+                            draw_param.net_apmode_ipaddr.toString().c_str());
                 } else if (WiFi.getMode() == WIFI_STA) {
                     if (draw_param.sys_ssid.empty()) {
                         _text = "Please setting WiFi at first.  ";
                     } else if (WiFi.isConnected()) {
-                        _text.assign(
-                            cbuf, snprintf(cbuf, sizeof(cbuf), "SSID:%s  /  ",
-                                           draw_param.sys_ssid.c_str()));
-                        _text.append(
-                            cbuf,
-                            snprintf(cbuf, sizeof(cbuf), "mDNS:%s.local  /  ",
-                                     draw_param.net_hostname.c_str()));
-                        _text.append(
-                            cbuf, snprintf(cbuf, sizeof(cbuf), "STA IP:%s  /  ",
-                                           WiFi.localIP().toString().c_str()));
+                        assignf(_text, "SSID:%s  /  ",
+                                draw_param.sys_ssid.c_str());
+                        appendf(_text, "mDNS:%s.local  /  ",
+                                draw_param.net_hostname.c_str());
+                        appendf(_text, "STA IP:%s  /  ",
+                                WiFi.localIP().toString().c_str());
                     } else {
                         static constexpr const char* status_tbl[] = {
                             "idle",        "no ssid avail",  "scan completed",
@@ -3752,30 +3742,27 @@ std::string framedata_t::getJsonData(void) const {
     // The former "pwd" (cloud pairing code), "interval" (cloud upload
     // interval) and "datetime" (only meaningful after NTP sync) fields were
     // removed along with cloud connectivity.
-    char cbuf[64];
     std::string result;
     result.reserve(768 * 6 + 512);
     result += "{\r\n";
 
     auto macaddr = draw_param.macaddr;
-    result.append(
-        cbuf, snprintf(cbuf, sizeof(cbuf),
-                       " \"macaddr\": \"%02x:%02x:%02x:%02x:%02x:%02x\",\r\n",
-                       macaddr[0], macaddr[1], macaddr[2], macaddr[3],
-                       macaddr[4], macaddr[5]));
-    result.append(cbuf, snprintf(cbuf, sizeof(cbuf), " \"center\": %3.1f,\r\n",
-                                 convertRawToCelsius(temp[center])));
-    result.append(cbuf, snprintf(cbuf, sizeof(cbuf), " \"average\": %3.1f,\r\n",
-                                 convertRawToCelsius(temp[average])));
-    result.append(cbuf, snprintf(cbuf, sizeof(cbuf), " \"highest\": %3.1f,\r\n",
-                                 convertRawToCelsius(temp[highest])));
-    result.append(cbuf, snprintf(cbuf, sizeof(cbuf), " \"lowest\": %3.1f,\r\n",
-                                 convertRawToCelsius(temp[lowest])));
-    result.append(cbuf, snprintf(cbuf, sizeof(cbuf), " \"frame\": [%3.1f",
-                                 convertRawToCelsius(pixel_raw[0])));
+    appendf(result, " \"macaddr\": \"%02x:%02x:%02x:%02x:%02x:%02x\",\r\n",
+            macaddr[0], macaddr[1], macaddr[2], macaddr[3],
+            macaddr[4], macaddr[5]);
+    appendf(result, " \"center\": %3.1f,\r\n",
+            convertRawToCelsius(temp[center]));
+    appendf(result, " \"average\": %3.1f,\r\n",
+            convertRawToCelsius(temp[average]));
+    appendf(result, " \"highest\": %3.1f,\r\n",
+            convertRawToCelsius(temp[highest]));
+    appendf(result, " \"lowest\": %3.1f,\r\n",
+            convertRawToCelsius(temp[lowest]));
+    appendf(result, " \"frame\": [%3.1f",
+            convertRawToCelsius(pixel_raw[0]));
     for (uint_fast16_t i = 1; i < frame_width * frame_height; ++i) {
-        result.append(cbuf, snprintf(cbuf, sizeof(cbuf), ",%3.1f",
-                                     convertRawToCelsius(pixel_raw[i])));
+        appendf(result, ",%3.1f",
+                convertRawToCelsius(pixel_raw[i]));
     }
     result += "]\r\n}\r\n";
 
